@@ -20,6 +20,7 @@ class Settings(BaseModel):
     max_daily_drawdown_pct: float = 5.0
     max_trade_loss_pct: float = 1.0
     top_symbols_limit: int = 1000
+    default_perpetual_leverage: int = 3
     binance_api_key: str = Field(default="")
     binance_api_secret: str = Field(default="")
     fly_api_token: str = Field(default="")
@@ -43,6 +44,7 @@ def get_settings() -> Settings:
         max_daily_drawdown_pct=float(os.getenv("MAX_DAILY_DRAWDOWN_PCT", "5")),
         max_trade_loss_pct=float(os.getenv("MAX_TRADE_LOSS_PCT", "1")),
         top_symbols_limit=int(os.getenv("TOP_SYMBOLS_LIMIT", "1000")),
+        default_perpetual_leverage=int(os.getenv("DEFAULT_PERPETUAL_LEVERAGE", "3")),
         binance_api_key=os.getenv("BINANCE_API_KEY", ""),
         binance_api_secret=os.getenv("BINANCE_API_SECRET", ""),
         fly_api_token=os.getenv("FLY_API_TOKEN", ""),

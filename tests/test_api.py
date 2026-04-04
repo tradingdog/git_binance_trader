@@ -20,6 +20,10 @@ def test_dashboard_endpoint() -> None:
     payload = response.json()
     assert "state" in payload
     assert payload["state"]["account"]["status"] in {"running", "paused", "halted"}
+    assert "margin_used" in payload["state"]["account"]
+    if payload["state"]["watchlist"]:
+        assert "market_type" in payload["state"]["watchlist"][0]
+        assert "leverage" in payload["state"]["watchlist"][0]
 
 
 def test_pause_action() -> None:

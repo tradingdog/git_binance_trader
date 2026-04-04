@@ -29,6 +29,8 @@ class SymbolSnapshot(BaseModel):
     volume_24h: float
     change_pct_24h: float
     market_type: MarketType = MarketType.spot
+    leverage: int = 1
+    data_source: str = "binance-spot"
 
 
 class Position(BaseModel):
@@ -37,6 +39,7 @@ class Position(BaseModel):
     entry_price: float
     current_price: float
     market_type: MarketType
+    leverage: int = 1
     stop_loss: float
     take_profit: float
     highest_price: float
@@ -45,6 +48,11 @@ class Position(BaseModel):
     @property
     def market_value(self) -> float:
         return self.quantity * self.current_price
+
+    @property
+    def margin_used(self) -> float:
+        leverage = max(self.leverage, 1)
+        return self.quantity * self.entry_price / leverage
 
     @property
     def unrealized_pnl(self) -> float:
@@ -58,6 +66,7 @@ class Trade(BaseModel):
     price: float
     realized_pnl: float = 0.0
     market_type: MarketType
+    leverage: int = 1
     strategy: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     note: str = "simulation"
@@ -74,6 +83,7 @@ class RiskStatus(BaseModel):
 class AccountSnapshot(BaseModel):
     equity: float
     cash: float
+    margin_used: float
     position_value: float
     balance_check_delta: float
     unrealized_pnl: float

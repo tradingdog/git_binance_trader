@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from git_binance_trader.config import Settings
-from git_binance_trader.core.models import Position, Side, StrategyState, SymbolSnapshot, Trade
+from git_binance_trader.core.models import MarketType, Position, Side, StrategyState, SymbolSnapshot, Trade
 from git_binance_trader.core.risk import RiskManager
 
 
@@ -67,18 +67,21 @@ class SimulationExchange:
             self.last_message = f"忽略无持仓卖出: {trade.symbol}"
             return
 
+        leverage = max(trade.leverage, 1)
         notional = trade.quantity * trade.price
+        margin_required = notional / leverage if trade.market_type == MarketType.perpetual else notional
         if trade.side == Side.buy:
-            if self.cash < notional:
+            if self.cash < margin_required:
                 self.last_message = f"资金不足，忽略买单: {trade.symbol}"
                 return
-            self.cash -= notional
+            self.cash -= margin_required
             self.positions[position_key] = Position(
                 symbol=trade.symbol,
                 quantity=trade.quantity,
                 entry_price=trade.price,
                 current_price=trade.price,
                 market_type=trade.market_type,
+                leverage=leverage,
                 stop_loss=trade.price * 0.992,
                 take_profit=trade.price * 1.018,
                 highest_price=trade.price,
@@ -90,8 +93,13 @@ class SimulationExchange:
         position = self.positions[position_key]
         realized_pnl = (trade.price - position.entry_price) * position.quantity
         trade.realized_pnl = realized_pnl
+        trade.leverage = position.leverage
         self.realized_pnl += realized_pnl
-        self.cash += trade.quantity * trade.price
+        released_margin = position.margin_used
+        if trade.market_type == MarketType.perpetual:
+            self.cash += released_margin + realized_pnl
+        else:
+            self.cash += trade.quantity * trade.price
         del self.positions[position_key]
         self.trades.append(trade)
         self.last_message = f"已模拟平仓: {trade.symbol}"
@@ -99,7 +107,8 @@ class SimulationExchange:
     def account_state(self) -> dict[str, float]:
         unrealized_pnl = sum(position.unrealized_pnl for position in self.positions.values())
         position_value = sum(position.market_value for position in self.positions.values())
-        equity = self.cash + position_value
+        margin_value = sum(position.margin_used for position in self.positions.values())
+        equity = self.cash + margin_value + unrealized_pnl
         self.peak_equity = max(self.peak_equity, equity)
         total_return_pct = (equity - self.settings.initial_balance_usdt) / self.settings.initial_balance_usdt * 100
         drawdown_pct = max(0.0, (self.peak_equity - equity) / self.peak_equity * 100) if self.peak_equity else 0.0
@@ -111,8 +120,9 @@ class SimulationExchange:
         return {
             "equity": round(equity, 4),
             "cash": round(self.cash, 4),
+            "margin_used": round(margin_value, 4),
             "position_value": round(position_value, 4),
-            "balance_check_delta": round(equity - self.cash - position_value, 8),
+            "balance_check_delta": round(equity - self.cash - margin_value - unrealized_pnl, 8),
             "unrealized_pnl": round(unrealized_pnl, 4),
             "realized_pnl": round(self.realized_pnl, 4),
             "total_return_pct": round(total_return_pct, 4),

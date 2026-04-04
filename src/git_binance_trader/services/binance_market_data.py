@@ -70,6 +70,8 @@ class BinanceMarketDataService:
                     volume_24h=float(item.get("quoteVolume", 0.0) or 0.0),
                     change_pct_24h=float(item.get("priceChangePercent", 0.0) or 0.0),
                     market_type=market_type,
+                    leverage=self.settings.default_perpetual_leverage if market_type == MarketType.perpetual else 1,
+                    data_source="binance-futures" if market_type == MarketType.perpetual else "binance-spot",
                 )
             )
 
@@ -133,6 +135,8 @@ class BinanceMarketDataService:
                     volume_24h=float(token_item.get("volume24h", 0.0) or 0.0),
                     change_pct_24h=float(token_item.get("percentChange24h", 0.0) or 0.0),
                     market_type=MarketType.alpha,
+                    leverage=1,
+                    data_source="binance-alpha",
                 )
             )
         return snapshots

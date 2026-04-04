@@ -3,17 +3,17 @@ from git_binance_trader.core.models import DashboardState
 
 def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     positions_html = "".join(
-        f"<tr><td>{position.symbol}</td><td>{position.quantity}</td><td>{position.entry_price:.4f}</td><td>{position.current_price:.4f}</td><td>{position.unrealized_pnl:.4f}</td></tr>"
+    f"<tr><td>{position.symbol}</td><td>{position.market_type.value}</td><td>{position.leverage}x</td><td>{position.quantity}</td><td>{position.entry_price:.4f}</td><td>{position.current_price:.4f}</td><td>{position.stop_loss:.4f}</td><td>{position.take_profit:.4f}</td><td>{position.unrealized_pnl:.4f}</td></tr>"
         for position in state.positions
-    ) or "<tr><td colspan='5'>当前无持仓</td></tr>"
+  ) or "<tr><td colspan='9'>当前无持仓</td></tr>"
 
     trades_html = "".join(
-        f"<tr><td>{trade.symbol}</td><td>{trade.side.value}</td><td>{trade.quantity}</td><td>{trade.price:.4f}</td><td>{trade.realized_pnl:.4f}</td><td>{trade.note}</td></tr>"
+    f"<tr><td>{trade.symbol}</td><td>{trade.market_type.value}</td><td>{trade.leverage}x</td><td>{trade.side.value}</td><td>{trade.quantity}</td><td>{trade.price:.4f}</td><td>{trade.realized_pnl:.4f}</td><td>{trade.note}</td></tr>"
         for trade in state.trades
-    ) or "<tr><td colspan='6'>暂无成交</td></tr>"
+  ) or "<tr><td colspan='8'>暂无成交</td></tr>"
 
     watchlist_html = "".join(
-        f"<tr><td>{item.symbol}</td><td>{item.market_type.value}</td><td>{item.price:.4f}</td><td>{item.change_pct_24h:.2f}%</td><td>{item.market_cap_rank}</td></tr>"
+    f"<tr><td>{item.symbol}</td><td>{item.market_type.value}</td><td>{item.leverage}x</td><td>{item.data_source}</td><td>{item.price:.4f}</td><td>{item.change_pct_24h:.2f}%</td><td>{item.volume_24h:.0f}</td><td>{item.market_cap_rank}</td></tr>"
         for item in state.watchlist
     )
 
@@ -86,6 +86,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     <section class='grid'>
       <div class='metric'><strong>账户净值</strong><span>{state.account.equity:.2f}</span></div>
       <div class='metric'><strong>现金余额</strong><span>{state.account.cash:.2f}</span></div>
+      <div class='metric'><strong>保证金占用</strong><span>{state.account.margin_used:.2f}</span></div>
       <div class='metric'><strong>持仓市值</strong><span>{state.account.position_value:.2f}</span></div>
       <div class='metric'><strong>现金+持仓校验差</strong><span>{state.account.balance_check_delta:.6f}</span></div>
       <div class='metric'><strong>总收益率</strong><span>{state.account.total_return_pct:.2f}%</span></div>
@@ -95,21 +96,21 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       <div class='panel'>
         <h3>持仓</h3>
         <table>
-          <thead><tr><th>标的</th><th>数量</th><th>开仓价</th><th>现价</th><th>浮盈亏</th></tr></thead>
+          <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>数量</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>浮盈亏</th></tr></thead>
           <tbody>{positions_html}</tbody>
         </table>
       </div>
       <div class='panel'>
         <h3>观察池（前 10）</h3>
         <table>
-          <thead><tr><th>标的</th><th>市场</th><th>价格</th><th>24h</th><th>排名</th></tr></thead>
+          <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>来源</th><th>价格</th><th>24h</th><th>24h成交额</th><th>排名</th></tr></thead>
           <tbody>{watchlist_html}</tbody>
         </table>
       </div>
       <div class='panel'>
         <h3>成交明细</h3>
         <table>
-          <thead><tr><th>标的</th><th>方向</th><th>数量</th><th>价格</th><th>已实现</th><th>备注</th></tr></thead>
+          <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>方向</th><th>数量</th><th>价格</th><th>已实现</th><th>备注</th></tr></thead>
           <tbody>{trades_html}</tbody>
         </table>
       </div>

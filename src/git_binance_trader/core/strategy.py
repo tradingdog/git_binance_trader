@@ -1,6 +1,6 @@
 from math import sqrt
 
-from git_binance_trader.core.models import Position, Side, SymbolSnapshot, Trade
+from git_binance_trader.core.models import MarketType, Position, Side, SymbolSnapshot, Trade
 
 
 class OpportunityStrategy:
@@ -10,6 +10,7 @@ class OpportunityStrategy:
         self.max_positions = 4
         self.max_exposure_pct = 25.0
         self.risk_per_trade_pct = 0.35
+        self.perpetual_leverage = 3
 
     def decide(
         self,
@@ -64,6 +65,7 @@ class OpportunityStrategy:
                     quantity=quantity,
                     price=snapshot.price,
                     market_type=snapshot.market_type,
+                    leverage=self._select_leverage(snapshot.market_type),
                     strategy=self.name,
                     note=note,
                 )
@@ -109,11 +111,17 @@ class OpportunityStrategy:
                         quantity=position.quantity,
                         price=position.current_price,
                         market_type=position.market_type,
+                        leverage=position.leverage,
                         strategy=self.name,
                         note=f"机会衰减退出 score={score:.2f}",
                     )
                 )
         return exits
+
+    def _select_leverage(self, market_type: MarketType) -> int:
+        if market_type == MarketType.perpetual:
+            return self.perpetual_leverage
+        return 1
 
     @staticmethod
     def _current_exposure_pct(positions: dict[str, Position], equity: float) -> float:

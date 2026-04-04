@@ -62,6 +62,7 @@ class TradingOrchestrator:
             account = AccountSnapshot(
                 equity=metrics["equity"],
                 cash=metrics["cash"],
+                margin_used=metrics["margin_used"],
                 position_value=metrics["position_value"],
                 balance_check_delta=metrics["balance_check_delta"],
                 unrealized_pnl=metrics["unrealized_pnl"],
