@@ -45,9 +45,9 @@
   - 完成后提交到 GitHub 仓库
 
 ## 当前版本快照
-- 当前版本：v0.6.0
+- 当前版本：v0.6.1
 - 更新时间：2026-04-05
-- 本次变更：接入真实 Binance API 并修复 Alpha 语义与资产口径展示。
+- 本次变更：改为官方 Alpha API 分类并修复跨市场同名标的冲突。
 - 执行准则：所有决策以“红线内稳定盈利”为唯一评判标准。
 
 ## 更新记录 v0.1.1 - 2026-04-04
@@ -90,4 +90,10 @@
 - 更新说明：行情服务切换为真实 Binance API 优先，新增 Alpha 新上市窗口识别；策略不再硬限制前 300；看板增加资产校验字段。
 - 风险检查：真实 API 数据波动更快，短周期内可能触发更频繁换仓；需继续通过日志与每小时报告优化阈值。
 - 验证结果：本地测试 7 项通过；线上 `/api/dashboard` 已返回 `position_value` 与 `balance_check_delta` 字段并出现 Alpha 分类标的。
+- 发布动作：已递增 VERSION，已更新 CHANGELOG 与 PROJECT_MEMORY。
+
+## 更新记录 v0.6.1 - 2026-04-05
+- 更新说明：根据 Binance 官方 Alpha 文档改为真实 Alpha REST API 分类，不再把非 Alpha 标的误标为 alpha。
+- 风险检查：Alpha 官方接口来自 `binance.com` Web API，若区域网络波动可能影响 Alpha 列表可用性；需继续监控接口稳定性。
+- 验证结果：本地测试 7 项通过；线上观察池 Alpha 列表已切换为官方 Alpha 接口返回的标的。
 - 发布动作：已递增 VERSION，已更新 CHANGELOG 与 PROJECT_MEMORY。

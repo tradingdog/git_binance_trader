@@ -36,7 +36,10 @@ class OpportunityStrategy:
             return trades, "; ".join(insights) if insights else "仓位已满，等待信号"
 
         for snapshot, score in scored:
-            if snapshot.symbol in positions:
+            if any(
+                position.symbol == snapshot.symbol and position.market_type == snapshot.market_type
+                for position in positions.values()
+            ):
                 continue
             if slots <= 0 or room <= 0:
                 break
@@ -96,12 +99,12 @@ class OpportunityStrategy:
     ) -> list[Trade]:
         score_map = {item.symbol: score for item, score in scored}
         exits: list[Trade] = []
-        for symbol, position in positions.items():
-            score = score_map.get(symbol, -999.0)
+        for position in positions.values():
+            score = score_map.get(position.symbol, -999.0)
             if score < -0.8:
                 exits.append(
                     Trade(
-                        symbol=symbol,
+                        symbol=position.symbol,
                         side=Side.sell,
                         quantity=position.quantity,
                         price=position.current_price,

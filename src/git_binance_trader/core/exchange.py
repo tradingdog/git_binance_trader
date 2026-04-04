@@ -19,11 +19,12 @@ class SimulationExchange:
         self.last_message = "系统已初始化"
 
     def apply_market_prices(self, watchlist: list[SymbolSnapshot]) -> None:
-        price_map = {item.symbol: item.price for item in watchlist}
+        price_map = {self._position_key(item.symbol, item.market_type): item.price for item in watchlist}
         to_close: list[Trade] = []
         for position in self.positions.values():
-            if position.symbol in price_map:
-                position.current_price = price_map[position.symbol]
+            position_key = self._position_key(position.symbol, position.market_type)
+            if position_key in price_map:
+                position.current_price = price_map[position_key]
                 if position.current_price > position.highest_price:
                     position.highest_price = position.current_price
                     trailing_stop = position.highest_price * 0.994
@@ -61,7 +62,8 @@ class SimulationExchange:
     def submit_trade(self, trade: Trade) -> None:
         if not self.settings.simulation_only:
             raise RuntimeError("仅允许模拟盘运行")
-        if trade.symbol not in self.positions and trade.side == Side.sell:
+        position_key = self._position_key(trade.symbol, trade.market_type)
+        if position_key not in self.positions and trade.side == Side.sell:
             self.last_message = f"忽略无持仓卖出: {trade.symbol}"
             return
 
@@ -71,7 +73,7 @@ class SimulationExchange:
                 self.last_message = f"资金不足，忽略买单: {trade.symbol}"
                 return
             self.cash -= notional
-            self.positions[trade.symbol] = Position(
+            self.positions[position_key] = Position(
                 symbol=trade.symbol,
                 quantity=trade.quantity,
                 entry_price=trade.price,
@@ -85,12 +87,12 @@ class SimulationExchange:
             self.last_message = f"已模拟开仓: {trade.symbol}"
             return
 
-        position = self.positions[trade.symbol]
+        position = self.positions[position_key]
         realized_pnl = (trade.price - position.entry_price) * position.quantity
         trade.realized_pnl = realized_pnl
         self.realized_pnl += realized_pnl
         self.cash += trade.quantity * trade.price
-        del self.positions[trade.symbol]
+        del self.positions[position_key]
         self.trades.append(trade)
         self.last_message = f"已模拟平仓: {trade.symbol}"
 
@@ -141,11 +143,11 @@ class SimulationExchange:
         self.last_message = "交易已恢复"
 
     def close_all_positions(self, reason: str) -> None:
-        for symbol in list(self.positions.keys()):
-            position = self.positions[symbol]
+        for position_key in list(self.positions.keys()):
+            position = self.positions[position_key]
             self.submit_trade(
                 Trade(
-                    symbol=symbol,
+                    symbol=position.symbol,
                     side=Side.sell,
                     quantity=position.quantity,
                     price=position.current_price,
@@ -156,3 +158,7 @@ class SimulationExchange:
                 )
             )
         self.last_message = f"已执行紧急平仓: {reason}"
+
+    @staticmethod
+    def _position_key(symbol: str, market_type) -> str:
+        return f"{market_type.value}:{symbol}"

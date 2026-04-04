@@ -19,7 +19,13 @@
 ## 数据源说明
 - 默认优先使用 Binance 实时接口（`api.binance.com` + `fapi.binance.com`），并自动携带 `BINANCE_API_KEY` 请求头。
 - Alpha 在本项目中表示“币安 Alpha/新上市机会分类”，不等同于对冲套利语义。
-- 通过 `ALPHA_LISTING_WINDOW_DAYS` 识别新上市窗口，参与机会评分。
+- Alpha 分类使用 Binance Alpha 官方文档接口：
+	- `https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list`
+	- `https://www.binance.com/bapi/defi/v1/public/alpha-trade/get-exchange-info`
+- 仅出现在官方 Alpha token 列表且交易对信息状态为 `TRADING` 的标的才标记为 alpha。
+
+## 提交规范
+- 每次提交标题前缀版本号，示例：`[v0.6.1] feat: 修复 Alpha 分类误判`。
 
 ## 已部署地址
 - 控制台：https://git-binance-trader-sim.fly.dev/

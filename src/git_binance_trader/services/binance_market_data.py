@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 from random import Random
 import httpx
 
@@ -34,13 +33,14 @@ class BinanceMarketDataService:
 
         try:
             async with httpx.AsyncClient(timeout=4.0, headers=headers) as client:
-                spot_resp, perp_resp, perp_info_resp = await self._fetch_bundle(client)
+                spot_resp, perp_resp, alpha_token_resp, alpha_info_resp = await self._fetch_bundle(client)
         except Exception:
             return []
 
         spot_payload = spot_resp.json() if spot_resp else []
         perp_payload = perp_resp.json() if perp_resp else []
-        perp_info_payload = perp_info_resp.json() if perp_info_resp else {}
+        alpha_token_payload = alpha_token_resp.json() if alpha_token_resp else {}
+        alpha_info_payload = alpha_info_resp.json() if alpha_info_resp else {}
 
         perp_map: dict[str, dict] = {}
         for item in perp_payload:
@@ -48,7 +48,7 @@ class BinanceMarketDataService:
             if symbol.endswith("USDT"):
                 perp_map[symbol] = item
 
-        alpha_symbols = self._collect_recent_listings(perp_info_payload)
+        alpha_snapshots = self._build_alpha_snapshots(alpha_token_payload, alpha_info_payload)
 
         snapshots: list[SymbolSnapshot] = []
         for item in spot_payload:
@@ -59,9 +59,7 @@ class BinanceMarketDataService:
                 continue
 
             market_type = MarketType.spot
-            if symbol in alpha_symbols:
-                market_type = MarketType.alpha
-            elif symbol in perp_map:
+            if symbol in perp_map:
                 market_type = MarketType.perpetual
 
             snapshots.append(
@@ -75,9 +73,9 @@ class BinanceMarketDataService:
                 )
             )
 
-        # 按成交额排序，Alpha 优先保留在前列，便于策略发现新币机会。
+        merged = snapshots + alpha_snapshots
         ordered = sorted(
-            snapshots,
+            merged,
             key=lambda row: (1 if row.market_type == MarketType.alpha else 0, row.volume_24h),
             reverse=True,
         )
@@ -88,29 +86,56 @@ class BinanceMarketDataService:
     async def _fetch_bundle(self, client: httpx.AsyncClient):
         spot_url = "https://api.binance.com/api/v3/ticker/24hr"
         perp_url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
-        perp_info_url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
-        spot_resp, perp_resp, perp_info_resp = await asyncio.gather(
+        alpha_token_url = "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list"
+        alpha_info_url = "https://www.binance.com/bapi/defi/v1/public/alpha-trade/get-exchange-info"
+        spot_resp, perp_resp, alpha_token_resp, alpha_info_resp = await asyncio.gather(
             client.get(spot_url),
             client.get(perp_url),
-            client.get(perp_info_url),
+            client.get(alpha_token_url),
+            client.get(alpha_info_url),
         )
         spot_resp.raise_for_status()
         perp_resp.raise_for_status()
-        perp_info_resp.raise_for_status()
-        return spot_resp, perp_resp, perp_info_resp
+        alpha_token_resp.raise_for_status()
+        alpha_info_resp.raise_for_status()
+        return spot_resp, perp_resp, alpha_token_resp, alpha_info_resp
 
-    def _collect_recent_listings(self, perp_info_payload: dict) -> set[str]:
-        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        threshold_ms = now_ms - self.settings.alpha_listing_window_days * 24 * 3600 * 1000
-        alpha_symbols: set[str] = set()
-        for item in perp_info_payload.get("symbols", []):
-            symbol = item.get("symbol", "")
-            if not symbol.endswith("USDT"):
+    def _build_alpha_snapshots(self, alpha_token_payload: dict, alpha_info_payload: dict) -> list[SymbolSnapshot]:
+        if alpha_token_payload.get("code") != "000000" or alpha_info_payload.get("code") != "000000":
+            return []
+
+        token_by_alpha_id: dict[str, dict] = {}
+        for item in alpha_token_payload.get("data", []) or []:
+            alpha_id = str(item.get("alphaId", "")).upper()
+            if alpha_id:
+                token_by_alpha_id[alpha_id] = item
+
+        snapshots: list[SymbolSnapshot] = []
+        for symbol_info in alpha_info_payload.get("data", {}).get("symbols", []) or []:
+            if symbol_info.get("status") != "TRADING":
                 continue
-            onboard = int(item.get("onboardDate", 0) or 0)
-            if onboard and onboard >= threshold_ms:
-                alpha_symbols.add(symbol)
-        return alpha_symbols
+            base_asset = str(symbol_info.get("baseAsset", "")).upper()
+            quote_asset = str(symbol_info.get("quoteAsset", "")).upper()
+            token_item = token_by_alpha_id.get(base_asset)
+            if not token_item or quote_asset != "USDT":
+                continue
+
+            display_symbol = f"{str(token_item.get('symbol', '')).upper()}USDT"
+            price = float(token_item.get("price", 0.0) or 0.0)
+            if not display_symbol or price <= 0:
+                continue
+
+            snapshots.append(
+                SymbolSnapshot(
+                    symbol=display_symbol,
+                    price=price,
+                    market_cap_rank=0,
+                    volume_24h=float(token_item.get("volume24h", 0.0) or 0.0),
+                    change_pct_24h=float(token_item.get("percentChange24h", 0.0) or 0.0),
+                    market_type=MarketType.alpha,
+                )
+            )
+        return snapshots
 
     def _fallback_watchlist(self) -> list[SymbolSnapshot]:
         watchlist: list[SymbolSnapshot] = []
