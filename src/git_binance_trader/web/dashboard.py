@@ -70,7 +70,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       <div class='panel'>
         <p style='margin:0;color:rgba(24,34,44,0.58)'>模拟资金 / 风控优先 / 禁止实盘</p>
         <h1 class='headline'>git_binance_trader 控制台</h1>
-        <p class='subline'>系统仅运行在模拟盘环境，默认执行现货、永续与 Alpha 套利统一风控框架。当前前端为观察者模式，仅展示策略结果。</p>
+        <p class='subline'>系统仅运行在模拟盘环境，默认执行现货、永续与 Alpha（币安专门交易分类/新上市机会）统一风控框架。当前前端为观察者模式，仅展示策略结果。</p>
         <div class='observer'>
           <strong>策略洞察：</strong> {state.strategy_insight or '暂无'}
           <div class='meta'>报告时间（UTC）：{state.generated_at.strftime('%Y-%m-%d %H:%M:%S')}</div>
@@ -86,6 +86,8 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     <section class='grid'>
       <div class='metric'><strong>账户净值</strong><span>{state.account.equity:.2f}</span></div>
       <div class='metric'><strong>现金余额</strong><span>{state.account.cash:.2f}</span></div>
+      <div class='metric'><strong>持仓市值</strong><span>{state.account.position_value:.2f}</span></div>
+      <div class='metric'><strong>现金+持仓校验差</strong><span>{state.account.balance_check_delta:.6f}</span></div>
       <div class='metric'><strong>总收益率</strong><span>{state.account.total_return_pct:.2f}%</span></div>
       <div class='metric'><strong>全程回撤</strong><span>{state.account.drawdown_pct:.2f}%</span></div>
     </section>

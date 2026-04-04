@@ -74,6 +74,8 @@ class RiskStatus(BaseModel):
 class AccountSnapshot(BaseModel):
     equity: float
     cash: float
+    position_value: float
+    balance_check_delta: float
     unrealized_pnl: float
     realized_pnl: float
     total_return_pct: float

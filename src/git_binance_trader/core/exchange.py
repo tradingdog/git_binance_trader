@@ -96,7 +96,8 @@ class SimulationExchange:
 
     def account_state(self) -> dict[str, float]:
         unrealized_pnl = sum(position.unrealized_pnl for position in self.positions.values())
-        equity = self.cash + sum(position.market_value for position in self.positions.values())
+        position_value = sum(position.market_value for position in self.positions.values())
+        equity = self.cash + position_value
         self.peak_equity = max(self.peak_equity, equity)
         total_return_pct = (equity - self.settings.initial_balance_usdt) / self.settings.initial_balance_usdt * 100
         drawdown_pct = max(0.0, (self.peak_equity - equity) / self.peak_equity * 100) if self.peak_equity else 0.0
@@ -108,6 +109,8 @@ class SimulationExchange:
         return {
             "equity": round(equity, 4),
             "cash": round(self.cash, 4),
+            "position_value": round(position_value, 4),
+            "balance_check_delta": round(equity - self.cash - position_value, 8),
             "unrealized_pnl": round(unrealized_pnl, 4),
             "realized_pnl": round(self.realized_pnl, 4),
             "total_return_pct": round(total_return_pct, 4),

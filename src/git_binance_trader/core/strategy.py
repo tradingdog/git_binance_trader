@@ -74,12 +74,13 @@ class OpportunityStrategy:
         return trades, "; ".join(insights)
 
     def _score_candidates(self, watchlist: list[SymbolSnapshot]) -> list[tuple[SymbolSnapshot, float]]:
-        candidates = [item for item in watchlist if item.market_cap_rank <= 300 and item.price > 0]
+        candidates = [item for item in watchlist if item.price > 0]
         scored: list[tuple[SymbolSnapshot, float]] = []
         for item in candidates:
             momentum = max(min(item.change_pct_24h, 12.0), -12.0)
             liquidity = sqrt(max(item.volume_24h, 1.0)) / 4000.0
-            alpha_bonus = 0.8 if item.market_type.value == "alpha" else 0.0
+            # Alpha 在这里表示币安 Alpha 分类/新上市机会，不是对冲套利标签。
+            alpha_bonus = 1.2 if item.market_type.value == "alpha" else 0.0
             perp_bonus = 0.4 if item.market_type.value == "perpetual" else 0.0
             score = momentum * 0.62 + liquidity * 0.28 + alpha_bonus + perp_bonus
             scored.append((item, score))

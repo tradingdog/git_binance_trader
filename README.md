@@ -16,6 +16,11 @@
 - 持仓跟踪：内置止损、止盈与跟踪止盈机制，触发后自动平仓。
 - 风险兜底：继续执行全程/单日/单笔亏损红线检查，触发即停机与清仓。
 
+## 数据源说明
+- 默认优先使用 Binance 实时接口（`api.binance.com` + `fapi.binance.com`），并自动携带 `BINANCE_API_KEY` 请求头。
+- Alpha 在本项目中表示“币安 Alpha/新上市机会分类”，不等同于对冲套利语义。
+- 通过 `ALPHA_LISTING_WINDOW_DAYS` 识别新上市窗口，参与机会评分。
+
 ## 已部署地址
 - 控制台：https://git-binance-trader-sim.fly.dev/
 - 健康检查：https://git-binance-trader-sim.fly.dev/health
