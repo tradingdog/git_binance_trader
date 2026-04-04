@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from random import Random
 import httpx
 
 from git_binance_trader.config import Settings
@@ -11,20 +10,12 @@ from git_binance_trader.core.models import MarketType, SymbolSnapshot
 class BinanceMarketDataService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self._random = Random(42)
-        self._seed = [
-            ("BTCUSDT", 83500.0, 1, 52000000000.0, 1.7, MarketType.spot),
-            ("ETHUSDT", 1820.0, 2, 27000000000.0, 2.1, MarketType.spot),
-            ("SOLUSDT", 126.5, 6, 8500000000.0, 4.3, MarketType.perpetual),
-            ("BNBUSDT", 602.1, 5, 2100000000.0, -0.4, MarketType.spot),
-            ("DOGEUSDT", 0.19, 10, 1450000000.0, 6.9, MarketType.alpha),
-        ]
 
     async def get_top_symbols(self) -> list[SymbolSnapshot]:
         snapshots = await self._fetch_realtime_snapshots()
         if snapshots:
             return snapshots if self.settings.top_symbols_limit <= 0 else snapshots[: self.settings.top_symbols_limit]
-        return self._fallback_watchlist()
+        return []
 
     async def _fetch_realtime_snapshots(self) -> list[SymbolSnapshot]:
         headers = {}
@@ -42,26 +33,30 @@ class BinanceMarketDataService:
         alpha_token_payload = alpha_token_resp.json() if alpha_token_resp else {}
         alpha_info_payload = alpha_info_resp.json() if alpha_info_resp else {}
 
-        perp_map: dict[str, dict] = {}
-        for item in perp_payload:
-            symbol = item.get("symbol", "")
-            if symbol.endswith("USDT"):
-                perp_map[symbol] = item
-
-        alpha_snapshots = self._build_alpha_snapshots(alpha_token_payload, alpha_info_payload)
-
-        snapshots: list[SymbolSnapshot] = []
+        spot_map: dict[str, dict] = {}
         for item in spot_payload:
             symbol = item.get("symbol", "")
             if not symbol.endswith("USDT"):
                 continue
-            if float(item.get("lastPrice", 0.0) or 0.0) <= 0:
+            price = float(item.get("lastPrice", 0.0) or 0.0)
+            if price <= 0:
                 continue
+            spot_map[symbol] = item
 
-            market_type = MarketType.spot
-            if symbol in perp_map:
-                market_type = MarketType.perpetual
+        perp_map: dict[str, dict] = {}
+        for item in perp_payload:
+            symbol = item.get("symbol", "")
+            if not symbol.endswith("USDT"):
+                continue
+            price = float(item.get("lastPrice", 0.0) or 0.0)
+            if price <= 0:
+                continue
+            perp_map[symbol] = item
 
+        alpha_snapshots = self._build_alpha_snapshots(alpha_token_payload, alpha_info_payload)
+
+        snapshots: list[SymbolSnapshot] = []
+        for symbol, item in spot_map.items():
             snapshots.append(
                 SymbolSnapshot(
                     symbol=symbol,
@@ -69,9 +64,23 @@ class BinanceMarketDataService:
                     market_cap_rank=0,
                     volume_24h=float(item.get("quoteVolume", 0.0) or 0.0),
                     change_pct_24h=float(item.get("priceChangePercent", 0.0) or 0.0),
-                    market_type=market_type,
-                    leverage=self.settings.default_perpetual_leverage if market_type == MarketType.perpetual else 1,
-                    data_source="binance-futures" if market_type == MarketType.perpetual else "binance-spot",
+                    market_type=MarketType.spot,
+                    leverage=1,
+                    data_source="binance-spot",
+                )
+            )
+
+        for symbol, item in perp_map.items():
+            snapshots.append(
+                SymbolSnapshot(
+                    symbol=symbol,
+                    price=float(item.get("lastPrice", 0.0) or 0.0),
+                    market_cap_rank=0,
+                    volume_24h=float(item.get("quoteVolume", 0.0) or 0.0),
+                    change_pct_24h=float(item.get("priceChangePercent", 0.0) or 0.0),
+                    market_type=MarketType.perpetual,
+                    leverage=self.settings.default_perpetual_leverage,
+                    data_source="binance-futures",
                 )
             )
 
@@ -141,18 +150,3 @@ class BinanceMarketDataService:
             )
         return snapshots
 
-    def _fallback_watchlist(self) -> list[SymbolSnapshot]:
-        watchlist: list[SymbolSnapshot] = []
-        for symbol, price, rank, volume, change, market_type in self._seed:
-            drift = self._random.uniform(-0.01, 0.01)
-            watchlist.append(
-                SymbolSnapshot(
-                    symbol=symbol,
-                    price=round(price * (1 + drift), 4),
-                    market_cap_rank=rank,
-                    volume_24h=volume,
-                    change_pct_24h=round(change + self._random.uniform(-1.5, 1.5), 2),
-                    market_type=market_type,
-                )
-            )
-        return watchlist

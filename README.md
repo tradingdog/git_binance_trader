@@ -18,6 +18,7 @@
 
 ## 数据源说明
 - 默认优先使用 Binance 实时接口（`api.binance.com` + `fapi.binance.com`），并自动携带 `BINANCE_API_KEY` 请求头。
+- 为保证真实性，已关闭任何随机/种子伪造行情回退；当 API 拉取失败时该轮策略将跳过交易。
 - Alpha 在本项目中表示“币安 Alpha/新上市机会分类”，不等同于对冲套利语义。
 - Alpha 分类使用 Binance Alpha 官方文档接口：
 	- `https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list`

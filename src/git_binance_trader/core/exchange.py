@@ -56,7 +56,8 @@ class SimulationExchange:
                     )
 
         for trade in to_close:
-            if trade.symbol in self.positions:
+            position_key = self._position_key(trade.symbol, trade.market_type)
+            if position_key in self.positions:
                 self.submit_trade(trade)
 
     def submit_trade(self, trade: Trade) -> None:

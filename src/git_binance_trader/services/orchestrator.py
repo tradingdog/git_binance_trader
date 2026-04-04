@@ -35,9 +35,13 @@ class TradingOrchestrator:
     async def run_cycle(self) -> DashboardState:
         async with self._lock:
             watchlist = await self.market_data.get_top_symbols()
+            if not watchlist:
+                self.exchange.last_message = "行情API拉取失败，已跳过本轮交易"
             self.exchange.apply_market_prices(watchlist)
             strategy_insight = "等待信号"
-            if self.exchange.status.value == "running":
+            if not watchlist:
+                strategy_insight = "实时行情缺失，策略未执行"
+            elif self.exchange.status.value == "running":
                 pre_metrics = self.exchange.account_state()
                 equity = pre_metrics["equity"]
                 planned_trades, strategy_insight = self.strategy.decide(
@@ -47,7 +51,11 @@ class TradingOrchestrator:
                     equity=equity,
                 )
                 for trade in planned_trades:
-                    if trade.symbol not in self.exchange.positions or trade.side.value == "sell":
+                    has_position = any(
+                        position.symbol == trade.symbol and position.market_type == trade.market_type
+                        for position in self.exchange.positions.values()
+                    )
+                    if trade.side.value == "sell" or not has_position:
                         self.exchange.submit_trade(trade)
                 self.exchange.apply_market_prices(watchlist)
 

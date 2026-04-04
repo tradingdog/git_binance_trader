@@ -80,7 +80,7 @@ class OpportunityStrategy:
 
     def _score_candidates(self, watchlist: list[SymbolSnapshot]) -> list[tuple[SymbolSnapshot, float]]:
         candidates = [item for item in watchlist if item.price > 0]
-        scored: list[tuple[SymbolSnapshot, float]] = []
+        best_by_symbol: dict[str, tuple[SymbolSnapshot, float]] = {}
         for item in candidates:
             momentum = max(min(item.change_pct_24h, 12.0), -12.0)
             liquidity = sqrt(max(item.volume_24h, 1.0)) / 4000.0
@@ -88,8 +88,10 @@ class OpportunityStrategy:
             alpha_bonus = 1.2 if item.market_type.value == "alpha" else 0.0
             perp_bonus = 0.4 if item.market_type.value == "perpetual" else 0.0
             score = momentum * 0.62 + liquidity * 0.28 + alpha_bonus + perp_bonus
-            scored.append((item, score))
-        return sorted(scored, key=lambda row: row[1], reverse=True)
+            existing = best_by_symbol.get(item.symbol)
+            if existing is None or score > existing[1]:
+                best_by_symbol[item.symbol] = (item, score)
+        return sorted(best_by_symbol.values(), key=lambda row: row[1], reverse=True)
 
     def _entry_filter(self, snapshot: SymbolSnapshot) -> bool:
         return snapshot.change_pct_24h >= 0.6 and snapshot.volume_24h > 100000000
@@ -99,10 +101,10 @@ class OpportunityStrategy:
         scored: list[tuple[SymbolSnapshot, float]],
         positions: dict[str, Position],
     ) -> list[Trade]:
-        score_map = {item.symbol: score for item, score in scored}
+        score_map = {f"{item.market_type.value}:{item.symbol}": score for item, score in scored}
         exits: list[Trade] = []
         for position in positions.values():
-            score = score_map.get(position.symbol, -999.0)
+            score = score_map.get(f"{position.market_type.value}:{position.symbol}", -999.0)
             if score < -0.8:
                 exits.append(
                     Trade(
