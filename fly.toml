@@ -1,0 +1,16 @@
+app = "git-binance-trader-sim"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  TRADING_MODE = "SIMULATION"
+  INITIAL_BALANCE_USDT = "10000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
