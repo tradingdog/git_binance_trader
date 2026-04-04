@@ -1,0 +1,20 @@
+[project]
+name = "git-binance-trader"
+version = "0.4.1"
+description = "仅模拟盘的币安量化交易系统"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "jinja2",
+  "httpx",
+  "pydantic",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
