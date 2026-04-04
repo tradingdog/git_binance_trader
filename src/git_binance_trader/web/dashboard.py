@@ -20,17 +20,17 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         ],
         ensure_ascii=False,
     )
-    storage_meta = "未启用持久存储监控"
+    storage_meta = "?????????"
     if state.storage is not None:
         storage_meta = (
-            f"持久目录：{state.storage.path} ｜ 总容量：{state.storage.total_mb:.0f}MB ｜ "
-            f"可用：{state.storage.free_mb:.0f}MB ｜ 最低阈值：{state.storage.min_free_mb}MB"
+            f"????:{state.storage.path} | ???:{state.storage.total_mb:.0f}MB | "
+            f"??:{state.storage.free_mb:.0f}MB | ????:{state.storage.min_free_mb}MB"
         )
 
     positions_html = "".join(
         f"<tr><td>{position.symbol}</td><td>{position.market_type.value}</td><td>{position.leverage}x</td><td>{position.quantity}</td><td>{position.entry_price:.4f}</td><td>{position.current_price:.4f}</td><td>{position.stop_loss:.4f}</td><td>{position.take_profit:.4f}</td><td>{position.unrealized_pnl:.4f}</td></tr>"
         for position in state.positions
-    ) or "<tr><td colspan='9'>当前无持仓</td></tr>"
+    ) or "<tr><td colspan='9'>?????</td></tr>"
 
     watchlist_html = "".join(
         f"<tr><td>{item.symbol}</td><td>{item.market_type.value}</td><td>{item.leverage}x</td><td>{item.data_source}</td><td>{item.price:.4f}</td><td>{item.change_pct_24h:.2f}%</td><td>{item.volume_24h:.0f}</td><td>{item.market_cap_rank}</td></tr>"
@@ -43,7 +43,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 <head>
   <meta charset='utf-8'>
   <meta name='viewport' content='width=device-width, initial-scale=1'>
-  <title>git_binance_trader 模拟盘控制台</title>
+  <title>git_binance_trader ??????</title>
   <style>
     :root {{
       --bg: #f4efe6;
@@ -101,43 +101,44 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
   <div class='shell'>
     <section class='hero'>
       <div class='panel'>
-        <p style='margin:0;color:rgba(24,34,44,0.58)'>模拟资金 / 风控优先 / 禁止实盘</p>
-        <h1 class='headline'>git_binance_trader 控制台</h1>
-        <p class='subline'>系统仅运行在模拟盘环境，默认执行现货、永续与 Alpha（币安专门交易分类/新上市机会）统一风控框架。当前前端为观察者模式，仅展示策略结果。</p>
+        <p style='margin:0;color:rgba(24,34,44,0.58)'>???? / ???? / ????</p>
+        <h1 class='headline'>git_binance_trader ???</h1>
+        <p class='subline'>???????????,?????????? Alpha(????????/?????)?????????????????,????????</p>
         <div class='observer'>
-          <strong>策略洞察：</strong> {state.strategy_insight or '暂无'}
-          <div class='meta'>报告时间（UTC）：{state.generated_at.strftime('%Y-%m-%d %H:%M:%S')}</div>
+          <strong>????:</strong> <span id='strategy-insight'>{state.strategy_insight or '??'}</span>
+          <div class='meta'>????(UTC):<span id='report-time'>{state.generated_at.strftime('%Y-%m-%d %H:%M:%S')}</span></div>
         </div>
       </div>
       <div class='panel'>
-        <strong>系统状态</strong>
-        <h2 style='margin:10px 0 6px'>{state.account.status.value}</h2>
-        <p class='{"status-bad" if state.account.risk_status.breached else "status-good"}'>{state.account.risk_status.message}</p>
-        <p>最近事件：{message}</p>
+        <strong>????</strong>
+        <h2 id='account-status' style='margin:10px 0 6px'>{state.account.status.value}</h2>
+        <p id='risk-status' class='{{"status-bad" if state.account.risk_status.breached else "status-good"}}'>{state.account.risk_status.message}</p>
+        <p>????:<span id='cycle-message'>{message}</span></p>
+        <p class='meta' id='last-updated-label' style='margin:4px 0 0'>????</p>
       </div>
     </section>
     <section class='grid'>
-      <div class='metric'><strong>账户净值</strong><span>{state.account.equity:.2f}</span></div>
-      <div class='metric'><strong>现金余额</strong><span>{state.account.cash:.2f}</span></div>
-      <div class='metric'><strong>保证金占用</strong><span>{state.account.margin_used:.2f}</span></div>
-      <div class='metric'><strong>持仓市值</strong><span>{state.account.position_value:.2f}</span></div>
-      <div class='metric'><strong>现金+持仓校验差</strong><span>{state.account.balance_check_delta:.6f}</span></div>
-      <div class='metric'><strong>总收益率</strong><span>{state.account.total_return_pct:.2f}%</span></div>
-      <div class='metric'><strong>全程回撤</strong><span>{state.account.drawdown_pct:.2f}%</span></div>
+      <div class='metric'><strong>????</strong><span id='metric-equity'>{state.account.equity:.2f}</span></div>
+      <div class='metric'><strong>????</strong><span id='metric-cash'>{state.account.cash:.2f}</span></div>
+      <div class='metric'><strong>?????</strong><span id='metric-margin'>{state.account.margin_used:.2f}</span></div>
+      <div class='metric'><strong>????</strong><span id='metric-position-val'>{state.account.position_value:.2f}</span></div>
+      <div class='metric'><strong>??+?????</strong><span id='metric-balance-delta'>{state.account.balance_check_delta:.6f}</span></div>
+      <div class='metric'><strong>????</strong><span id='metric-total-return'>{state.account.total_return_pct:.2f}%</span></div>
+      <div class='metric'><strong>????</strong><span id='metric-drawdown'>{state.account.drawdown_pct:.2f}%</span></div>
     </section>
 
     <section class='panel chart-panel'>
       <div class='chart-header'>
         <div>
-          <h3 style='margin:0 0 6px'>净值曲线</h3>
-          <div class='meta'>支持 1 小时、4 小时、日线、周线切换。{storage_meta}</div>
-          <div id='chart-range-meta' class='meta'>当前窗口：--</div>
+          <h3 style='margin:0 0 6px'>????</h3>
+          <div class='meta'>?? 1 ???4 ???????????{storage_meta}</div>
+          <div id='chart-range-meta' class='meta'>????:--</div>
         </div>
         <div class='chart-actions'>
-          <button class='chart-button active' data-window='1h'>1小时</button>
-          <button class='chart-button' data-window='4h'>4小时</button>
-          <button class='chart-button' data-window='1d'>日线</button>
-          <button class='chart-button' data-window='1w'>周线</button>
+          <button class='chart-button active' data-window='1h'>1??</button>
+          <button class='chart-button' data-window='4h'>4??</button>
+          <button class='chart-button' data-window='1d'>??</button>
+          <button class='chart-button' data-window='1w'>??</button>
         </div>
       </div>
       <div class='chart-surface' id='chart-surface'>
@@ -155,37 +156,37 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           <path id='equity-area' fill='url(#equity-fill)' stroke='none'></path>
           <path id='equity-line' fill='none' stroke='#b65f3a' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'></path>
           <g id='equity-points'></g>
-          <text id='equity-empty' x='490' y='150' text-anchor='middle' fill='rgba(24,34,44,0.52)' font-size='18'>等待历史净值累积</text>
+          <text id='equity-empty' x='490' y='150' text-anchor='middle' fill='rgba(24,34,44,0.52)' font-size='18'>????????</text>
         </svg>
         <div id='chart-tooltip' class='chart-tooltip'></div>
         <div class='chart-summary'>
-          <div><strong>最新净值</strong><span id='chart-latest'>--</span></div>
-          <div><strong>区间涨跌</strong><span id='chart-change'>--</span></div>
-          <div><strong>区间最高</strong><span id='chart-high'>--</span></div>
-          <div><strong>区间最低</strong><span id='chart-low'>--</span></div>
+          <div><strong>????</strong><span id='chart-latest'>--</span></div>
+          <div><strong>????</strong><span id='chart-change'>--</span></div>
+          <div><strong>????</strong><span id='chart-high'>--</span></div>
+          <div><strong>????</strong><span id='chart-low'>--</span></div>
         </div>
       </div>
     </section>
 
     <section class='tables'>
       <div class='panel'>
-        <h3>持仓</h3>
+        <h3>??</h3>
         <table>
-          <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>数量</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>浮盈亏</th></tr></thead>
-          <tbody>{positions_html}</tbody>
+          <thead><tr><th>??</th><th>??</th><th>??</th><th>??</th><th>???</th><th>??</th><th>??</th><th>??</th><th>???</th></tr></thead>
+          <tbody id='positions-body'>{positions_html}</tbody>
         </table>
       </div>
       <div class='panel'>
-        <h3>观察池（前 10）</h3>
+        <h3>???(? 10)</h3>
         <table>
-          <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>来源</th><th>价格</th><th>24h</th><th>24h成交额</th><th>排名</th></tr></thead>
-          <tbody>{watchlist_html}</tbody>
+          <thead><tr><th>??</th><th>??</th><th>??</th><th>??</th><th>??</th><th>24h</th><th>24h???</th><th>??</th></tr></thead>
+          <tbody id='watchlist-body'>{watchlist_html}</tbody>
         </table>
       </div>
       <div class='panel'>
         <div class='panel-tools'>
-          <h3 style='margin:0'>成交明细</h3>
-          <label>条数
+          <h3 style='margin:0'>????</h3>
+          <label>??
             <select id='trades-limit' class='select'>
               <option value='500' selected>500</option>
               <option value='1000'>1000</option>
@@ -196,21 +197,21 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         </div>
         <div class='scroll-box'>
           <table>
-            <thead><tr><th>时间</th><th>标的</th><th>市场</th><th>杠杆</th><th>方向</th><th>数量</th><th>价格</th><th>已实现</th><th>备注</th></tr></thead>
-            <tbody id='trades-body'><tr><td colspan='9'>加载中...</td></tr></tbody>
+            <thead><tr><th>??</th><th>??</th><th>??</th><th>??</th><th>??</th><th>??</th><th>??</th><th>???</th><th>??</th></tr></thead>
+            <tbody id='trades-body'><tr><td colspan='9'>???...</td></tr></tbody>
           </table>
         </div>
       </div>
       <div class='panel'>
-        <h3>每小时报告（最新快照）</h3>
+        <h3>?????(????)</h3>
         <pre>{report}</pre>
       </div>
     </section>
 
     <section class='panel' style='margin-top:16px;'>
       <div class='panel-tools'>
-        <h3 style='margin:0'>运行日志</h3>
-        <label>条数
+        <h3 style='margin:0'>????</h3>
+        <label>??
           <select id='logs-limit' class='select'>
             <option value='500' selected>500</option>
             <option value='1000'>1000</option>
@@ -218,15 +219,15 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
             <option value='5000'>5000</option>
           </select>
         </label>
-        <button id='copy-logs' class='btn'>一键复制日志</button>
+        <button id='copy-logs' class='btn'>??????</button>
       </div>
-      <div id='log-box' class='log-box'>加载中...</div>
+      <div id='log-box' class='log-box'>???...</div>
     </section>
   </div>
 
   <script>
     const equityHistory = {history_payload};
-    const serverNowMs = new Date('{generated_at_iso}').getTime();
+    let serverNowMs = new Date('{generated_at_iso}').getTime();
     const windowConfig = {{
       '1h': {{ spanMs: 60 * 60 * 1000, bucketMs: 60 * 1000 }},
       '4h': {{ spanMs: 4 * 60 * 60 * 1000, bucketMs: 5 * 60 * 1000 }},
@@ -237,8 +238,8 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       .map((point) => ({{ ...point, tsMs: new Date(point.timestamp).getTime() }}))
       .filter((point) => Number.isFinite(point.tsMs))
       .sort((a, b) => a.tsMs - b.tsMs);
-    const historyMinTs = sortedHistory.length ? sortedHistory[0].tsMs : serverNowMs;
-    const historyMaxTs = sortedHistory.length ? sortedHistory[sortedHistory.length - 1].tsMs : serverNowMs;
+    let historyMinTs = sortedHistory.length ? sortedHistory[0].tsMs : serverNowMs;
+    let historyMaxTs = sortedHistory.length ? sortedHistory[sortedHistory.length - 1].tsMs : serverNowMs;
     const viewportEndByWindow = {{
       '1h': Math.max(serverNowMs, historyMaxTs),
       '4h': Math.max(serverNowMs, historyMaxTs),
@@ -266,7 +267,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         return `${{String(d.getUTCMonth() + 1).padStart(2, '0')}}-${{String(d.getUTCDate()).padStart(2, '0')}} ` +
           `${{String(d.getUTCHours()).padStart(2, '0')}}:${{String(d.getUTCMinutes()).padStart(2, '0')}}:${{String(d.getUTCSeconds()).padStart(2, '0')}} UTC`;
       }};
-      return `${{fmt(startMs)}} 至 ${{fmt(endMs)}}`;
+      return `${{fmt(startMs)}} ? ${{fmt(endMs)}}`;
     }}
 
     function clampViewport(windowKey, endMs) {{
@@ -348,11 +349,11 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         line.setAttribute('d', '');
         area.setAttribute('d', '');
         empty.style.display = 'block';
-        rangeMeta.textContent = '当前窗口：无可用数据';
+        rangeMeta.textContent = '????:?????';
         return;
       }}
       empty.style.display = 'none';
-      rangeMeta.textContent = `当前窗口：${{formatRange(result.startMs, result.endMs)}}`;
+      rangeMeta.textContent = `????:${{formatRange(result.startMs, result.endMs)}}`;
 
       const minValue = Math.min(...points.map((point) => point.equity));
       const maxValue = Math.max(...points.map((point) => point.equity));
@@ -421,7 +422,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         dot.addEventListener('mouseenter', () => {{
           tooltip.style.display = 'block';
           const hoverTs = item.point.bucketTs || item.point.tsMs;
-          tooltip.innerHTML = `时间: ${{formatTime(hoverTs, windowKey)}}<br>净值: ${{item.point.equity.toFixed(2)}}`;
+          tooltip.innerHTML = `??: ${{formatTime(hoverTs, windowKey)}}<br>??: ${{item.point.equity.toFixed(2)}}`;
           crosshair.style.display = 'block';
           crosshair.setAttribute('x1', String(item.x));
           crosshair.setAttribute('x2', String(item.x));
@@ -471,12 +472,12 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 
     async function loadTrades(limit) {{
       const body = document.getElementById('trades-body');
-      body.innerHTML = `<tr><td colspan='9'>加载中...</td></tr>`;
+      body.innerHTML = `<tr><td colspan='9'>???...</td></tr>`;
       try {{
         const response = await fetch(`/api/trades?limit=${{limit}}`);
         const payload = await response.json();
         if (!payload.items || !payload.items.length) {{
-          body.innerHTML = `<tr><td colspan='9'>暂无成交</td></tr>`;
+          body.innerHTML = `<tr><td colspan='9'>????</td></tr>`;
           return;
         }}
         body.innerHTML = payload.items.map((trade) => `
@@ -493,18 +494,18 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           </tr>
         `).join('');
       }} catch (_) {{
-        body.innerHTML = `<tr><td colspan='9'>成交明细加载失败</td></tr>`;
+        body.innerHTML = `<tr><td colspan='9'>????????</td></tr>`;
       }}
     }}
 
     async function loadLogs(limit) {{
       const box = document.getElementById('log-box');
-      box.textContent = '加载中...';
+      box.textContent = '???...';
       try {{
         const response = await fetch(`/api/logs/tail?lines=${{limit}}`);
         box.textContent = await response.text();
       }} catch (_) {{
-        box.textContent = '日志加载失败';
+        box.textContent = '??????';
       }}
     }}
 
@@ -568,16 +569,119 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       const content = document.getElementById('log-box').textContent || '';
       try {{
         await navigator.clipboard.writeText(content);
-        alert('日志已复制到剪贴板');
+        alert('?????????');
       }} catch (_) {{
-        alert('复制失败，请手动复制');
+        alert('????,?????');
       }}
     }});
 
     activateWindow(localStorage.getItem('equity-window') || '1h');
     loadTrades(500);
     loadLogs(500);
-    setTimeout(() => window.location.reload(), 30000);
+
+    let lastUpdatedAt = Date.now();
+
+    function updateLastUpdated() {{
+      const el = document.getElementById('last-updated-label');
+      if (!el) return;
+      const secs = Math.round((Date.now() - lastUpdatedAt) / 1000);
+      el.textContent = secs < 60
+        ? `????? ${{secs}} ??`
+        : `????? ${{Math.floor(secs / 60)}} ???`;
+    }}
+
+    function renderPositionRow(p) {{
+      const pnl = ((p.current_price - p.entry_price) * p.quantity).toFixed(4);
+      return `<tr>` +
+        `<td>${{p.symbol}}</td>` +
+        `<td>${{p.market_type}}</td>` +
+        `<td>${{p.leverage}}x</td>` +
+        `<td>${{p.quantity}}</td>` +
+        `<td>${{Number(p.entry_price).toFixed(4)}}</td>` +
+        `<td>${{Number(p.current_price).toFixed(4)}}</td>` +
+        `<td>${{Number(p.stop_loss).toFixed(4)}}</td>` +
+        `<td>${{Number(p.take_profit).toFixed(4)}}</td>` +
+        `<td>${{pnl}}</td>` +
+        `</tr>`;
+    }}
+
+    function renderWatchlistRow(w) {{
+      return `<tr>` +
+        `<td>${{w.symbol}}</td>` +
+        `<td>${{w.market_type}}</td>` +
+        `<td>${{w.leverage}}x</td>` +
+        `<td>${{w.data_source}}</td>` +
+        `<td>${{Number(w.price).toFixed(4)}}</td>` +
+        `<td>${{Number(w.change_pct_24h).toFixed(2)}}%</td>` +
+        `<td>${{Number(w.volume_24h).toFixed(0)}}</td>` +
+        `<td>${{w.market_cap_rank}}</td>` +
+        `</tr>`;
+    }}
+
+    async function softRefresh() {{
+      try {{
+        const resp = await fetch('/api/dashboard');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const state = data.state;
+        const acc = state.account;
+
+        document.getElementById('metric-equity').textContent = Number(acc.equity).toFixed(2);
+        document.getElementById('metric-cash').textContent = Number(acc.cash).toFixed(2);
+        document.getElementById('metric-margin').textContent = Number(acc.margin_used).toFixed(2);
+        document.getElementById('metric-position-val').textContent = Number(acc.position_value).toFixed(2);
+        document.getElementById('metric-balance-delta').textContent = Number(acc.balance_check_delta).toFixed(6);
+        document.getElementById('metric-total-return').textContent = Number(acc.total_return_pct).toFixed(2) + '%';
+        document.getElementById('metric-drawdown').textContent = Number(acc.drawdown_pct).toFixed(2) + '%';
+
+        document.getElementById('account-status').textContent = acc.status;
+        const riskEl = document.getElementById('risk-status');
+        riskEl.className = acc.risk_status.breached ? 'status-bad' : 'status-good';
+        riskEl.textContent = acc.risk_status.message;
+        document.getElementById('cycle-message').textContent = data.message || '--';
+
+        document.getElementById('strategy-insight').textContent = state.strategy_insight || '??';
+        const genAt = new Date(state.generated_at);
+        document.getElementById('report-time').textContent =
+          `${{genAt.getUTCFullYear()}}-${{String(genAt.getUTCMonth() + 1).padStart(2, '0')}}-${{String(genAt.getUTCDate()).padStart(2, '0')}} ` +
+          `${{String(genAt.getUTCHours()).padStart(2, '0')}}:${{String(genAt.getUTCMinutes()).padStart(2, '0')}}:${{String(genAt.getUTCSeconds()).padStart(2, '0')}}`;
+
+        document.getElementById('positions-body').innerHTML = state.positions && state.positions.length
+          ? state.positions.map(renderPositionRow).join('')
+          : "<tr><td colspan='9'>?????</td></tr>";
+
+        document.getElementById('watchlist-body').innerHTML = state.watchlist && state.watchlist.length
+          ? state.watchlist.map(renderWatchlistRow).join('')
+          : "<tr><td colspan='8'>?????</td></tr>";
+
+        if (state.equity_history && state.equity_history.length) {{
+          const prevMaxTs = historyMaxTs;
+          const newHistory = state.equity_history
+            .map((p) => ({{ ...p, tsMs: new Date(p.timestamp).getTime() }}))
+            .filter((p) => Number.isFinite(p.tsMs))
+            .sort((a, b) => a.tsMs - b.tsMs);
+          sortedHistory.splice(0, sortedHistory.length, ...newHistory);
+          historyMinTs = sortedHistory[0].tsMs;
+          historyMaxTs = sortedHistory[sortedHistory.length - 1].tsMs;
+          serverNowMs = new Date(state.generated_at).getTime();
+          for (const wk of Object.keys(viewportEndByWindow)) {{
+            if (Math.abs(viewportEndByWindow[wk] - prevMaxTs) < 60000) {{
+              viewportEndByWindow[wk] = Math.max(serverNowMs, historyMaxTs);
+            }}
+          }}
+          drawChart(activeWindowKey);
+        }}
+
+        loadTrades(parseInt(tradesLimitSelect.value));
+        loadLogs(parseInt(logsLimitSelect.value));
+        lastUpdatedAt = Date.now();
+      }} catch (_) {{
+        // ????????
+      }}
+    }}
+
+    setInterval(updateLastUpdated, 5000);
+    setInterval(softRefresh, 30000);
   </script>
 </body>
 </html>
