@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+from git_binance_trader.config import Settings
+from git_binance_trader.core.models import Position, Side, StrategyState, SymbolSnapshot, Trade
+from git_binance_trader.core.risk import RiskManager
+
+
+class SimulationExchange:
+    def __init__(self, settings: Settings, risk_manager: RiskManager) -> None:
+        self.settings = settings
+        self.risk_manager = risk_manager
+        self.cash = settings.initial_balance_usdt
+        self.realized_pnl = 0.0
+        self.positions: dict[str, Position] = {}
+        self.trades: list[Trade] = []
+        self.peak_equity = settings.initial_balance_usdt
+        self.start_of_day_equity = settings.initial_balance_usdt
+        self.status = StrategyState.running
+        self.last_message = "系统已初始化"
+
+    def apply_market_prices(self, watchlist: list[SymbolSnapshot]) -> None:
+        price_map = {item.symbol: item.price for item in watchlist}
+        to_close: list[Trade] = []
+        for position in self.positions.values():
+            if position.symbol in price_map:
+                position.current_price = price_map[position.symbol]
+                if position.current_price > position.highest_price:
+                    position.highest_price = position.current_price
+                    trailing_stop = position.highest_price * 0.994
+                    if trailing_stop > position.stop_loss:
+                        position.stop_loss = trailing_stop
+                if position.current_price <= position.stop_loss:
+                    to_close.append(
+                        Trade(
+                            symbol=position.symbol,
+                            side=Side.sell,
+                            quantity=position.quantity,
+                            price=position.current_price,
+                            market_type=position.market_type,
+                            strategy="risk_guard",
+                            note="触发止损/跟踪止盈",
+                        )
+                    )
+                elif position.current_price >= position.take_profit:
+                    to_close.append(
+                        Trade(
+                            symbol=position.symbol,
+                            side=Side.sell,
+                            quantity=position.quantity,
+                            price=position.current_price,
+                            market_type=position.market_type,
+                            strategy="risk_guard",
+                            note="触发止盈",
+                        )
+                    )
+
+        for trade in to_close:
+            if trade.symbol in self.positions:
+                self.submit_trade(trade)
+
+    def submit_trade(self, trade: Trade) -> None:
+        if not self.settings.simulation_only:
+            raise RuntimeError("仅允许模拟盘运行")
+        if trade.symbol not in self.positions and trade.side == Side.sell:
+            self.last_message = f"忽略无持仓卖出: {trade.symbol}"
+            return
+
+        notional = trade.quantity * trade.price
+        if trade.side == Side.buy:
+            if self.cash < notional:
+                self.last_message = f"资金不足，忽略买单: {trade.symbol}"
+                return
+            self.cash -= notional
+            self.positions[trade.symbol] = Position(
+                symbol=trade.symbol,
+                quantity=trade.quantity,
+                entry_price=trade.price,
+                current_price=trade.price,
+                market_type=trade.market_type,
+                stop_loss=trade.price * 0.992,
+                take_profit=trade.price * 1.018,
+                highest_price=trade.price,
+            )
+            self.trades.append(trade)
+            self.last_message = f"已模拟开仓: {trade.symbol}"
+            return
+
+        position = self.positions[trade.symbol]
+        realized_pnl = (trade.price - position.entry_price) * position.quantity
+        trade.realized_pnl = realized_pnl
+        self.realized_pnl += realized_pnl
+        self.cash += trade.quantity * trade.price
+        del self.positions[trade.symbol]
+        self.trades.append(trade)
+        self.last_message = f"已模拟平仓: {trade.symbol}"
+
+    def account_state(self) -> dict[str, float]:
+        unrealized_pnl = sum(position.unrealized_pnl for position in self.positions.values())
+        equity = self.cash + sum(position.market_value for position in self.positions.values())
+        self.peak_equity = max(self.peak_equity, equity)
+        total_return_pct = (equity - self.settings.initial_balance_usdt) / self.settings.initial_balance_usdt * 100
+        drawdown_pct = max(0.0, (self.peak_equity - equity) / self.peak_equity * 100) if self.peak_equity else 0.0
+        single_trade_loss_pct = 0.0
+        if self.trades:
+            worst_trade = min((trade.realized_pnl for trade in self.trades), default=0.0)
+            single_trade_loss_pct = abs(min(worst_trade, 0.0)) / self.settings.initial_balance_usdt * 100
+        daily_drawdown_pct = max(0.0, (self.start_of_day_equity - equity) / self.start_of_day_equity * 100)
+        return {
+            "equity": round(equity, 4),
+            "cash": round(self.cash, 4),
+            "unrealized_pnl": round(unrealized_pnl, 4),
+            "realized_pnl": round(self.realized_pnl, 4),
+            "total_return_pct": round(total_return_pct, 4),
+            "drawdown_pct": round(drawdown_pct, 4),
+            "daily_drawdown_pct": round(daily_drawdown_pct, 4),
+            "single_trade_loss_pct": round(single_trade_loss_pct, 4),
+        }
+
+    def evaluate_risk(self) -> tuple[bool, str, dict[str, float]]:
+        metrics = self.account_state()
+        risk_status = self.risk_manager.evaluate(
+            peak_equity=self.peak_equity,
+            current_equity=metrics["equity"],
+            start_of_day_equity=self.start_of_day_equity,
+            single_trade_loss_pct=metrics["single_trade_loss_pct"],
+        )
+        if risk_status.breached:
+            self.status = StrategyState.halted
+            self.close_all_positions(reason=risk_status.message)
+        return risk_status.breached, risk_status.message, metrics
+
+    def pause(self) -> None:
+        self.status = StrategyState.paused
+        self.last_message = "交易已暂停"
+
+    def resume(self) -> None:
+        self.status = StrategyState.running
+        self.last_message = "交易已恢复"
+
+    def close_all_positions(self, reason: str) -> None:
+        for symbol in list(self.positions.keys()):
+            position = self.positions[symbol]
+            self.submit_trade(
+                Trade(
+                    symbol=symbol,
+                    side=Side.sell,
+                    quantity=position.quantity,
+                    price=position.current_price,
+                    realized_pnl=position.unrealized_pnl,
+                    market_type=position.market_type,
+                    strategy="risk_guard",
+                    note=reason,
+                )
+            )
+        self.last_message = f"已执行紧急平仓: {reason}"
