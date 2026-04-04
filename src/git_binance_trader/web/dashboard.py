@@ -230,11 +230,12 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
   <script>
     const equityHistory = {history_payload};
     let serverNowMs = new Date('{generated_at_iso}').getTime();
+    const displayOffsetMs = 8 * 60 * 60 * 1000;
     const windowConfig = {{
-      '1h': {{ spanMs: 60 * 60 * 1000, bucketMs: 60 * 1000 }},
-      '4h': {{ spanMs: 4 * 60 * 60 * 1000, bucketMs: 5 * 60 * 1000 }},
-      '1d': {{ spanMs: 24 * 60 * 60 * 1000, bucketMs: 60 * 60 * 1000 }},
-      '1w': {{ spanMs: 7 * 24 * 60 * 60 * 1000, bucketMs: 6 * 60 * 60 * 1000 }},
+      '1h': {{ bucketMs: 60 * 60 * 1000, visibleBuckets: 5 }},
+      '4h': {{ bucketMs: 4 * 60 * 60 * 1000, visibleBuckets: 6 }},
+      '1d': {{ bucketMs: 24 * 60 * 60 * 1000, visibleBuckets: 7 }},
+      '1w': {{ bucketMs: 7 * 24 * 60 * 60 * 1000, visibleBuckets: 8 }},
     }};
     const sortedHistory = equityHistory
       .map((point) => ({{ ...point, tsMs: new Date(point.timestamp).getTime() }}))
@@ -289,21 +290,47 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       return `${{fmt(startMs)}} 至 ${{fmt(endMs)}}`;
     }}
 
+    function alignToPeriodEnd(windowKey, ts) {{
+      const shifted = new Date(ts + displayOffsetMs);
+      shifted.setUTCMilliseconds(0);
+      shifted.setUTCSeconds(0);
+
+      if (windowKey === '1h') {{
+        shifted.setUTCMinutes(0);
+      }} else if (windowKey === '4h') {{
+        shifted.setUTCMinutes(0);
+        shifted.setUTCHours(Math.floor(shifted.getUTCHours() / 4) * 4);
+      }} else if (windowKey === '1d') {{
+        shifted.setUTCMinutes(0);
+        shifted.setUTCHours(0, 0, 0, 0);
+      }} else if (windowKey === '1w') {{
+        shifted.setUTCMinutes(0);
+        shifted.setUTCHours(0, 0, 0, 0);
+        const day = shifted.getUTCDay();
+        const diffToMonday = day === 0 ? 6 : day - 1;
+        shifted.setUTCDate(shifted.getUTCDate() - diffToMonday);
+      }}
+
+      return shifted.getTime() - displayOffsetMs;
+    }}
+
     function clampViewport(windowKey, endMs) {{
-      const spanMs = windowConfig[windowKey].spanMs;
-      const maxEnd = Math.max(serverNowMs, historyMaxTs);
-      const minEnd = historyMinTs + spanMs;
+      const config = windowConfig[windowKey];
+      const maxEnd = alignToPeriodEnd(windowKey, Math.max(serverNowMs, historyMaxTs));
+      const minEnd = alignToPeriodEnd(windowKey, historyMinTs) + (config.visibleBuckets - 1) * config.bucketMs;
       if (minEnd >= maxEnd) {{
         return maxEnd;
       }}
-      return Math.min(maxEnd, Math.max(minEnd, endMs));
+      const snappedEnd = alignToPeriodEnd(windowKey, endMs);
+      return Math.min(maxEnd, Math.max(minEnd, snappedEnd));
     }}
 
     function seriesForWindow(windowKey) {{
       const config = windowConfig[windowKey];
-      const endMs = clampViewport(windowKey, viewportEndByWindow[windowKey] ?? Math.max(serverNowMs, historyMaxTs));
+      const defaultEndMs = alignToPeriodEnd(windowKey, Math.max(serverNowMs, historyMaxTs));
+      const endMs = clampViewport(windowKey, viewportEndByWindow[windowKey] ?? defaultEndMs);
       viewportEndByWindow[windowKey] = endMs;
-      const startMs = endMs - config.spanMs;
+      const startMs = endMs - (config.visibleBuckets - 1) * config.bucketMs;
       if (!sortedHistory.length) {{
         return {{ points: [], startMs, endMs, bucketMs: config.bucketMs }};
       }}
@@ -316,8 +343,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         cursor += 1;
       }}
 
-      const firstBucket = Math.floor(startMs / config.bucketMs) * config.bucketMs;
-      for (let bucketTs = firstBucket; bucketTs <= endMs; bucketTs += config.bucketMs) {{
+      for (let bucketTs = startMs; bucketTs <= endMs; bucketTs += config.bucketMs) {{
         while (cursor < sortedHistory.length && sortedHistory[cursor].tsMs <= bucketTs) {{
           lastKnown = sortedHistory[cursor];
           cursor += 1;
@@ -441,7 +467,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         dot.addEventListener('mouseenter', () => {{
           tooltip.style.display = 'block';
           const hoverTs = item.point.bucketTs || item.point.tsMs;
-          tooltip.innerHTML = `时间: ${{formatDateTime(hoverTs)}}<br>净值: ${{item.point.equity.toFixed(2)}}`;
+          tooltip.innerHTML = `周期: ${{formatDateTime(hoverTs)}}<br>净值: ${{item.point.equity.toFixed(2)}}`;
           crosshair.style.display = 'block';
           crosshair.setAttribute('x1', String(item.x));
           crosshair.setAttribute('x2', String(item.x));
@@ -560,7 +586,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         if (!dragging) return;
         const width = Math.max(200, chartSurface.clientWidth - 78);
         const deltaX = event.clientX - dragStartX;
-        const spanMs = windowConfig[activeWindowKey].spanMs;
+        const spanMs = (windowConfig[activeWindowKey].visibleBuckets - 1) * windowConfig[activeWindowKey].bucketMs;
         const shiftMs = (-deltaX / width) * spanMs;
         viewportEndByWindow[activeWindowKey] = clampViewport(activeWindowKey, dragStartEndMs + shiftMs);
         drawChart(activeWindowKey);
@@ -682,8 +708,9 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           historyMaxTs = sortedHistory[sortedHistory.length - 1].tsMs;
           serverNowMs = new Date(state.generated_at).getTime();
           for (const wk of Object.keys(viewportEndByWindow)) {{
-            if (Math.abs(viewportEndByWindow[wk] - prevMaxTs) < 60000) {{
-              viewportEndByWindow[wk] = Math.max(serverNowMs, historyMaxTs);
+            const currentAlignedMax = alignToPeriodEnd(wk, prevMaxTs);
+            if (Math.abs(viewportEndByWindow[wk] - currentAlignedMax) < windowConfig[wk].bucketMs) {{
+              viewportEndByWindow[wk] = alignToPeriodEnd(wk, Math.max(serverNowMs, historyMaxTs));
             }}
           }}
           drawChart(activeWindowKey);
