@@ -20,4 +20,4 @@ async def test_run_cycle_generates_state_and_report(tmp_path: Path) -> None:
     assert state.account.status.value in {"running", "paused", "halted"}
     reports = list(tmp_path.glob("report-*.md"))
     assert reports
-    assert reports[0].read_text(encoding="utf-8").startswith("# 每日复盘报告")
+    assert reports[0].read_text(encoding="utf-8").startswith("# 每小时策略报告")

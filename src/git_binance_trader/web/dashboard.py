@@ -48,6 +48,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .metric span {{ display: block; margin-top: 10px; font-size: 28px; font-weight: 700; }}
     .actions {{ display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }}
     .observer {{ margin-top: 18px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,0.7); }}
+    .meta {{ margin-top: 8px; color: rgba(24,34,44,0.68); font-size: 13px; }}
     button {{ border: 0; border-radius: 999px; padding: 12px 18px; cursor: pointer; font-weight: 700; }}
     .primary {{ background: var(--accent); color: #fff; }}
     .secondary {{ background: #fff; color: var(--ink); border: 1px solid var(--line); }}
@@ -72,6 +73,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         <p class='subline'>系统仅运行在模拟盘环境，默认执行现货、永续与 Alpha 套利统一风控框架。当前前端为观察者模式，仅展示策略结果。</p>
         <div class='observer'>
           <strong>策略洞察：</strong> {state.strategy_insight or '暂无'}
+          <div class='meta'>报告时间（UTC）：{state.generated_at.strftime('%Y-%m-%d %H:%M:%S')}</div>
         </div>
       </div>
       <div class='panel'>
@@ -110,7 +112,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         </table>
       </div>
       <div class='panel'>
-        <h3>每日复盘</h3>
+        <h3>每小时报告（最新快照）</h3>
         <pre>{report}</pre>
       </div>
     </section>

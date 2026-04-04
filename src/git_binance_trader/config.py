@@ -2,6 +2,11 @@ from functools import lru_cache
 from pydantic import BaseModel, Field
 import os
 
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
 
 class Settings(BaseModel):
     project_name: str = "git_binance_trader"
@@ -9,6 +14,8 @@ class Settings(BaseModel):
     initial_balance_usdt: float = 10000.0
     cycle_interval_seconds: int = 30
     reports_dir: str = "reports"
+    logs_dir: str = "logs"
+    report_interval_minutes: int = 60
     max_drawdown_pct: float = 15.0
     max_daily_drawdown_pct: float = 5.0
     max_trade_loss_pct: float = 1.0
@@ -30,6 +37,8 @@ def get_settings() -> Settings:
         initial_balance_usdt=float(os.getenv("INITIAL_BALANCE_USDT", "10000")),
         cycle_interval_seconds=int(os.getenv("CYCLE_INTERVAL_SECONDS", "30")),
         reports_dir=os.getenv("REPORTS_DIR", "reports"),
+        logs_dir=os.getenv("LOGS_DIR", "logs"),
+        report_interval_minutes=int(os.getenv("REPORT_INTERVAL_MINUTES", "60")),
         max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "15")),
         max_daily_drawdown_pct=float(os.getenv("MAX_DAILY_DRAWDOWN_PCT", "5")),
         max_trade_loss_pct=float(os.getenv("MAX_TRADE_LOSS_PCT", "1")),

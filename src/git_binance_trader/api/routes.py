@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from git_binance_trader.core.models import DashboardState
 from git_binance_trader.services.orchestrator import orchestrator
@@ -28,8 +28,28 @@ async def dashboard_data() -> dict[str, object]:
     return {
         "message": payload["message"],
         "report": payload["report"],
+        "last_cycle_at": payload["last_cycle_at"],
+        "report_files": orchestrator.list_report_files()[:24],
         "state": state.model_dump(mode="json"),
     }
+
+
+@router.get("/api/reports/latest", response_class=PlainTextResponse)
+async def latest_report() -> str:
+    return orchestrator.latest_report_text()
+
+
+@router.get("/api/reports", response_class=PlainTextResponse)
+async def list_reports() -> str:
+    files = orchestrator.list_report_files()
+    if not files:
+        return "暂无每小时报告"
+    return "\n".join(files)
+
+
+@router.get("/api/logs/tail", response_class=PlainTextResponse)
+async def logs_tail() -> str:
+    return orchestrator.tail_runtime_log()
 
 
 @router.post("/api/actions/pause")

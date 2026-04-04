@@ -1,19 +1,22 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from git_binance_trader.core.models import DashboardState
 
 
 class DailyReporter:
-    def build_report(self, state: DashboardState) -> str:
+    def build_report(self, state: DashboardState, now: datetime | None = None) -> str:
+        now_ts = now or datetime.now(timezone.utc)
         lines = [
-            f"# 每日复盘报告 {datetime.now().strftime('%Y-%m-%d')}",
+            f"# 每小时策略报告 {now_ts.strftime('%Y-%m-%d %H:00 UTC')}",
             "",
             f"- 账户净值: {state.account.equity:.2f} USDT",
             f"- 总收益率: {state.account.total_return_pct:.2f}%",
             f"- 全程回撤: {state.account.drawdown_pct:.2f}%",
             f"- 单日回撤: {state.account.daily_drawdown_pct:.2f}%",
             f"- 风险状态: {state.account.risk_status.message}",
+            f"- 策略洞察: {state.strategy_insight or '暂无'}",
+            f"- 生成时间: {now_ts.isoformat()}",
             "",
             "## 持仓",
         ]

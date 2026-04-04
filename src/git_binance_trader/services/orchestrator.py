@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from git_binance_trader.config import get_settings
@@ -10,6 +10,7 @@ from git_binance_trader.core.models import AccountSnapshot, DashboardState
 from git_binance_trader.core.risk import RiskManager
 from git_binance_trader.core.strategy import OpportunityStrategy
 from git_binance_trader.services.binance_market_data import BinanceMarketDataService
+from git_binance_trader.services.logging_setup import get_strategy_logger
 from git_binance_trader.services.reporter import DailyReporter
 
 
@@ -25,8 +26,9 @@ class TradingOrchestrator:
         self._last_state: DashboardState | None = None
         self._last_report = ""
         self._last_cycle_at: datetime | None = None
-        self._report_date = ""
+        self._last_report_at: datetime | None = None
         self._runner_task: asyncio.Task[None] | None = None
+        self.logger = get_strategy_logger(self.settings.logs_dir)
 
     async def run_cycle(self) -> DashboardState:
         async with self._lock:
@@ -76,9 +78,12 @@ class TradingOrchestrator:
                 strategy_insight=strategy_insight,
             )
             self._last_state = state
-            self._last_report = self.reporter.build_report(state)
-            self._last_cycle_at = datetime.now(timezone.utc)
-            self._write_daily_report_if_needed(self._last_report)
+            now_ts = datetime.now(timezone.utc)
+            self._last_report = self.reporter.build_report(state, now=now_ts)
+            self._last_cycle_at = now_ts
+            self._write_report_snapshot(self._last_report)
+            self._write_hourly_report_if_due(self._last_report, now_ts)
+            self._log_cycle(state, strategy_insight)
             return state
 
     async def refresh(self) -> DashboardState:
@@ -127,15 +132,56 @@ class TradingOrchestrator:
                 await self.run_cycle()
             except Exception as exc:
                 self.exchange.last_message = f"后台循环异常: {exc}"
+                self.logger.exception("cycle_error=%s", exc)
             await asyncio.sleep(self.settings.cycle_interval_seconds)
 
-    def _write_daily_report_if_needed(self, report: str) -> None:
-        report_date = datetime.now().strftime("%Y-%m-%d")
+    def _write_report_snapshot(self, report: str) -> None:
         reports_dir = Path(self.settings.reports_dir)
         reports_dir.mkdir(parents=True, exist_ok=True)
-        report_path = reports_dir / f"report-{report_date}.md"
-        report_path.write_text(report, encoding="utf-8")
-        self._report_date = report_date
+        latest_path = reports_dir / "latest.md"
+        latest_path.write_text(report, encoding="utf-8")
+
+    def _write_hourly_report_if_due(self, report: str, now_ts: datetime) -> None:
+        if self._last_report_at and now_ts - self._last_report_at < timedelta(minutes=self.settings.report_interval_minutes):
+            return
+        reports_dir = Path(self.settings.reports_dir)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        hourly_path = reports_dir / f"report-{now_ts.strftime('%Y%m%d-%H00')}.md"
+        hourly_path.write_text(report, encoding="utf-8")
+        self._last_report_at = now_ts
+
+    def list_report_files(self) -> list[str]:
+        reports_dir = Path(self.settings.reports_dir)
+        if not reports_dir.exists():
+            return []
+        return sorted((path.name for path in reports_dir.glob("report-*.md")), reverse=True)
+
+    def latest_report_text(self) -> str:
+        reports_dir = Path(self.settings.reports_dir)
+        latest_path = reports_dir / "latest.md"
+        if latest_path.exists():
+            return latest_path.read_text(encoding="utf-8")
+        return self._last_report or "暂无报告"
+
+    def tail_runtime_log(self, lines: int = 120) -> str:
+        log_path = Path(self.settings.logs_dir) / "strategy.log"
+        if not log_path.exists():
+            return "暂无日志"
+        content = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        return "\n".join(content[-lines:])
+
+    def _log_cycle(self, state: DashboardState, strategy_insight: str) -> None:
+        self.logger.info(
+            "cycle status=%s equity=%.4f cash=%.4f return=%.4f drawdown=%.4f positions=%d trades=%d insight=%s",
+            state.account.status.value,
+            state.account.equity,
+            state.account.cash,
+            state.account.total_return_pct,
+            state.account.drawdown_pct,
+            len(state.positions),
+            len(state.trades),
+            strategy_insight,
+        )
 
 
 orchestrator = TradingOrchestrator()

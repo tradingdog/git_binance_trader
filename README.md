@@ -32,6 +32,15 @@ pytest
 
 ## 运行说明
 - 服务启动后会按 `CYCLE_INTERVAL_SECONDS` 后台循环执行模拟策略。
-- 每日复盘报告默认写入 `reports/` 目录。
+- 每小时报告默认写入 `reports/` 目录。
 - 当前仅允许模拟模式，禁止实盘下单。
 - 前端默认只读观察，不提供人工交易控制按钮。
+
+## 报告与日志
+- 最新报告接口：`/api/reports/latest`
+- 报告列表接口：`/api/reports`
+- 运行日志接口：`/api/logs/tail`
+- Fly 命令查看（示例）：
+	- `flyctl ssh console -a git-binance-trader-sim -C "ls -lah reports"`
+	- `flyctl ssh console -a git-binance-trader-sim -C "cat reports/latest.md"`
+	- `flyctl ssh console -a git-binance-trader-sim -C "tail -n 120 logs/strategy.log"`
