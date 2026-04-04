@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
 from git_binance_trader.core.models import DashboardState
@@ -48,8 +48,14 @@ async def list_reports() -> str:
 
 
 @router.get("/api/logs/tail", response_class=PlainTextResponse)
-async def logs_tail() -> str:
-    return orchestrator.tail_runtime_log()
+async def logs_tail(lines: int = Query(default=500, ge=100, le=5000)) -> str:
+    return orchestrator.tail_runtime_log(lines=lines)
+
+
+@router.get("/api/trades")
+async def trades(limit: int = Query(default=500, ge=100, le=5000)) -> dict[str, object]:
+    items = orchestrator.list_recent_trades(limit=limit)
+    return {"count": len(items), "items": items}
 
 
 @router.post("/api/actions/pause")

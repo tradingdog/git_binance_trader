@@ -189,7 +189,12 @@ class TradingOrchestrator:
             return latest_path.read_text(encoding="utf-8")
         return self._last_report or "暂无报告"
 
-    def tail_runtime_log(self, lines: int = 120) -> str:
+    def list_recent_trades(self, limit: int = 500) -> list[dict[str, object]]:
+        limit = max(1, min(limit, 5000))
+        return [trade.model_dump(mode="json") for trade in reversed(self.exchange.trades[-limit:])]
+
+    def tail_runtime_log(self, lines: int = 500) -> str:
+        lines = max(1, min(lines, 5000))
         log_path = Path(self.settings.logs_dir) / "strategy.log"
         if not log_path.exists():
             return "暂无日志"

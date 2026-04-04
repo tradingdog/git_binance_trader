@@ -32,3 +32,17 @@ def test_pause_action() -> None:
     response = client.post("/api/actions/pause")
     assert response.status_code == 200
     assert response.json()["status"] == "paused"
+
+
+def test_trades_endpoint_with_limit() -> None:
+    response = client.get("/api/trades?limit=500")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "count" in payload
+    assert "items" in payload
+
+
+def test_logs_tail_endpoint_with_limit() -> None:
+    response = client.get("/api/logs/tail?lines=500")
+    assert response.status_code == 200
+    assert isinstance(response.text, str)

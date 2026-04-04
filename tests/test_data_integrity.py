@@ -8,31 +8,23 @@ from git_binance_trader.core.strategy import OpportunityStrategy
 from git_binance_trader.services.binance_market_data import BinanceMarketDataService
 
 
-class _MockResp:
-    def __init__(self, payload):
-        self._payload = payload
-
-    def json(self):
-        return self._payload
-
-
 @pytest.mark.anyio
 async def test_market_data_uses_real_perp_price_without_spot_overwrite() -> None:
     service = BinanceMarketDataService(Settings())
 
-    async def fake_fetch_bundle(_):
-        return (
-            _MockResp([
-                {"symbol": "BTCUSDT", "lastPrice": "83000", "quoteVolume": "1000", "priceChangePercent": "1.2"},
-            ]),
-            _MockResp([
-                {"symbol": "BTCUSDT", "lastPrice": "67000", "quoteVolume": "2000", "priceChangePercent": "0.6"},
-            ]),
-            _MockResp({"code": "000000", "data": []}),
-            _MockResp({"code": "000000", "data": {"symbols": []}}),
-        )
+    payloads = iter(
+        [
+            [{"symbol": "BTCUSDT", "lastPrice": "83000", "quoteVolume": "1000", "priceChangePercent": "1.2"}],
+            [{"symbol": "BTCUSDT", "lastPrice": "67000", "quoteVolume": "2000", "priceChangePercent": "0.6"}],
+            {"code": "000000", "data": []},
+            {"code": "000000", "data": {"symbols": []}},
+        ]
+    )
 
-    service._fetch_bundle = fake_fetch_bundle  # type: ignore[method-assign]
+    async def fake_fetch_json_with_retry(*_, **__):
+        return next(payloads)
+
+    service._fetch_json_with_retry = fake_fetch_json_with_retry  # type: ignore[method-assign]
     snapshots = await service._fetch_realtime_snapshots()
 
     spot = next(item for item in snapshots if item.symbol == "BTCUSDT" and item.market_type == MarketType.spot)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
+
 import httpx
 
 from git_binance_trader.config import Settings
@@ -22,16 +24,33 @@ class BinanceMarketDataService:
         if self.settings.binance_api_key:
             headers["X-MBX-APIKEY"] = self.settings.binance_api_key
 
-        try:
-            async with httpx.AsyncClient(timeout=4.0, headers=headers) as client:
-                spot_resp, perp_resp, alpha_token_resp, alpha_info_resp = await self._fetch_bundle(client)
-        except Exception:
+        async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
+            spot_payload = await self._fetch_json_with_retry(client, "https://api.binance.com/api/v3/ticker/24hr", retries=2)
+            perp_payload = await self._fetch_json_with_retry(client, "https://fapi.binance.com/fapi/v1/ticker/24hr", retries=2)
+
+            # Alpha 接口波动较大，失败时不应影响主行情链路。
+            alpha_token_payload = await self._fetch_json_with_retry(
+                client,
+                "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list",
+                retries=1,
+            )
+            alpha_info_payload = await self._fetch_json_with_retry(
+                client,
+                "https://www.binance.com/bapi/defi/v1/public/alpha-trade/get-exchange-info",
+                retries=1,
+            )
+
+        if not isinstance(spot_payload, list) and not isinstance(perp_payload, list):
             return []
 
-        spot_payload = spot_resp.json() if spot_resp else []
-        perp_payload = perp_resp.json() if perp_resp else []
-        alpha_token_payload = alpha_token_resp.json() if alpha_token_resp else {}
-        alpha_info_payload = alpha_info_resp.json() if alpha_info_resp else {}
+        if not isinstance(spot_payload, list):
+            spot_payload = []
+        if not isinstance(perp_payload, list):
+            perp_payload = []
+        if not isinstance(alpha_token_payload, dict):
+            alpha_token_payload = {}
+        if not isinstance(alpha_info_payload, dict):
+            alpha_info_payload = {}
 
         spot_map: dict[str, dict] = {}
         for item in spot_payload:
@@ -94,22 +113,16 @@ class BinanceMarketDataService:
             row.market_cap_rank = idx
         return ordered
 
-    async def _fetch_bundle(self, client: httpx.AsyncClient):
-        spot_url = "https://api.binance.com/api/v3/ticker/24hr"
-        perp_url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
-        alpha_token_url = "https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list"
-        alpha_info_url = "https://www.binance.com/bapi/defi/v1/public/alpha-trade/get-exchange-info"
-        spot_resp, perp_resp, alpha_token_resp, alpha_info_resp = await asyncio.gather(
-            client.get(spot_url),
-            client.get(perp_url),
-            client.get(alpha_token_url),
-            client.get(alpha_info_url),
-        )
-        spot_resp.raise_for_status()
-        perp_resp.raise_for_status()
-        alpha_token_resp.raise_for_status()
-        alpha_info_resp.raise_for_status()
-        return spot_resp, perp_resp, alpha_token_resp, alpha_info_resp
+    async def _fetch_json_with_retry(self, client: httpx.AsyncClient, url: str, retries: int) -> Any:
+        for attempt in range(retries + 1):
+            try:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response.json()
+            except Exception:
+                if attempt >= retries:
+                    return None
+                await asyncio.sleep(0.4 * (attempt + 1))
 
     def _build_alpha_snapshots(self, alpha_token_payload: dict, alpha_info_payload: dict) -> list[SymbolSnapshot]:
         if alpha_token_payload.get("code") != "000000" or alpha_info_payload.get("code") != "000000":
