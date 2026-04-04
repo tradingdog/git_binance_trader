@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from zoneinfo import ZoneInfo
 
 from git_binance_trader.core.models import DashboardState
 
 
 def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     generated_at_iso = state.generated_at.isoformat()
+    generated_at_local = state.generated_at.astimezone(ZoneInfo("Asia/Shanghai"))
     history_payload = json.dumps(
         [
             {
@@ -20,17 +22,17 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         ],
         ensure_ascii=False,
     )
-    storage_meta = "?????????"
+    storage_meta = "未启用持久存储监控"
     if state.storage is not None:
         storage_meta = (
-            f"????:{state.storage.path} | ???:{state.storage.total_mb:.0f}MB | "
-            f"??:{state.storage.free_mb:.0f}MB | ????:{state.storage.min_free_mb}MB"
+            f"持久目录：{state.storage.path} ｜ 总容量：{state.storage.total_mb:.0f}MB ｜ "
+            f"可用：{state.storage.free_mb:.0f}MB ｜ 最低阈值：{state.storage.min_free_mb}MB"
         )
 
     positions_html = "".join(
         f"<tr><td>{position.symbol}</td><td>{position.market_type.value}</td><td>{position.leverage}x</td><td>{position.quantity}</td><td>{position.entry_price:.4f}</td><td>{position.current_price:.4f}</td><td>{position.stop_loss:.4f}</td><td>{position.take_profit:.4f}</td><td>{position.unrealized_pnl:.4f}</td></tr>"
         for position in state.positions
-    ) or "<tr><td colspan='9'>?????</td></tr>"
+    ) or "<tr><td colspan='9'>当前无持仓</td></tr>"
 
     watchlist_html = "".join(
         f"<tr><td>{item.symbol}</td><td>{item.market_type.value}</td><td>{item.leverage}x</td><td>{item.data_source}</td><td>{item.price:.4f}</td><td>{item.change_pct_24h:.2f}%</td><td>{item.volume_24h:.0f}</td><td>{item.market_cap_rank}</td></tr>"
@@ -43,7 +45,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 <head>
   <meta charset='utf-8'>
   <meta name='viewport' content='width=device-width, initial-scale=1'>
-  <title>git_binance_trader ??????</title>
+  <title>git_binance_trader 模拟盘控制台</title>
   <style>
     :root {{
       --bg: #f4efe6;
@@ -101,44 +103,44 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
   <div class='shell'>
     <section class='hero'>
       <div class='panel'>
-        <p style='margin:0;color:rgba(24,34,44,0.58)'>???? / ???? / ????</p>
-        <h1 class='headline'>git_binance_trader ???</h1>
-        <p class='subline'>???????????,?????????? Alpha(????????/?????)?????????????????,????????</p>
+        <p style='margin:0;color:rgba(24,34,44,0.58)'>模拟资金 / 风控优先 / 禁止实盘</p>
+        <h1 class='headline'>git_binance_trader 控制台</h1>
+        <p class='subline'>系统仅运行在模拟盘环境，默认执行现货、永续与 Alpha（币安专门交易分类/新上市机会）统一风控框架。当前前端为观察者模式，仅展示策略结果。</p>
         <div class='observer'>
-          <strong>????:</strong> <span id='strategy-insight'>{state.strategy_insight or '??'}</span>
-          <div class='meta'>????(UTC):<span id='report-time'>{state.generated_at.strftime('%Y-%m-%d %H:%M:%S')}</span></div>
+          <strong>策略洞察：</strong> <span id='strategy-insight'>{state.strategy_insight or '暂无'}</span>
+          <div class='meta'>报告时间（北京时间）：<span id='report-time'>{generated_at_local.strftime('%Y-%m-%d %H:%M:%S')}</span></div>
         </div>
       </div>
       <div class='panel'>
-        <strong>????</strong>
+        <strong>系统状态</strong>
         <h2 id='account-status' style='margin:10px 0 6px'>{state.account.status.value}</h2>
         <p id='risk-status' class='{{"status-bad" if state.account.risk_status.breached else "status-good"}}'>{state.account.risk_status.message}</p>
-        <p>????:<span id='cycle-message'>{message}</span></p>
-        <p class='meta' id='last-updated-label' style='margin:4px 0 0'>????</p>
+        <p>最近事件：<span id='cycle-message'>{message}</span></p>
+        <p class='meta' id='last-updated-label' style='margin:4px 0 0'>正在运行</p>
       </div>
     </section>
     <section class='grid'>
-      <div class='metric'><strong>????</strong><span id='metric-equity'>{state.account.equity:.2f}</span></div>
-      <div class='metric'><strong>????</strong><span id='metric-cash'>{state.account.cash:.2f}</span></div>
-      <div class='metric'><strong>?????</strong><span id='metric-margin'>{state.account.margin_used:.2f}</span></div>
-      <div class='metric'><strong>????</strong><span id='metric-position-val'>{state.account.position_value:.2f}</span></div>
-      <div class='metric'><strong>??+?????</strong><span id='metric-balance-delta'>{state.account.balance_check_delta:.6f}</span></div>
-      <div class='metric'><strong>????</strong><span id='metric-total-return'>{state.account.total_return_pct:.2f}%</span></div>
-      <div class='metric'><strong>????</strong><span id='metric-drawdown'>{state.account.drawdown_pct:.2f}%</span></div>
+      <div class='metric'><strong>账户净值</strong><span id='metric-equity'>{state.account.equity:.2f}</span></div>
+      <div class='metric'><strong>现金余额</strong><span id='metric-cash'>{state.account.cash:.2f}</span></div>
+      <div class='metric'><strong>保证金占用</strong><span id='metric-margin'>{state.account.margin_used:.2f}</span></div>
+      <div class='metric'><strong>持仓市值</strong><span id='metric-position-val'>{state.account.position_value:.2f}</span></div>
+      <div class='metric'><strong>现金+持仓校验差</strong><span id='metric-balance-delta'>{state.account.balance_check_delta:.6f}</span></div>
+      <div class='metric'><strong>总收益率</strong><span id='metric-total-return'>{state.account.total_return_pct:.2f}%</span></div>
+      <div class='metric'><strong>全程回撤</strong><span id='metric-drawdown'>{state.account.drawdown_pct:.2f}%</span></div>
     </section>
 
     <section class='panel chart-panel'>
       <div class='chart-header'>
         <div>
-          <h3 style='margin:0 0 6px'>????</h3>
-          <div class='meta'>?? 1 ???4 ???????????{storage_meta}</div>
-          <div id='chart-range-meta' class='meta'>????:--</div>
+          <h3 style='margin:0 0 6px'>净值曲线</h3>
+          <div class='meta'>支持 1 小时、4 小时、日线、周线切换。图表时间按北京时间显示。{storage_meta}</div>
+          <div id='chart-range-meta' class='meta'>当前窗口：--</div>
         </div>
         <div class='chart-actions'>
-          <button class='chart-button active' data-window='1h'>1??</button>
-          <button class='chart-button' data-window='4h'>4??</button>
-          <button class='chart-button' data-window='1d'>??</button>
-          <button class='chart-button' data-window='1w'>??</button>
+          <button class='chart-button active' data-window='1h'>1小时</button>
+          <button class='chart-button' data-window='4h'>4小时</button>
+          <button class='chart-button' data-window='1d'>日线</button>
+          <button class='chart-button' data-window='1w'>周线</button>
         </div>
       </div>
       <div class='chart-surface' id='chart-surface'>
@@ -156,37 +158,37 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           <path id='equity-area' fill='url(#equity-fill)' stroke='none'></path>
           <path id='equity-line' fill='none' stroke='#b65f3a' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'></path>
           <g id='equity-points'></g>
-          <text id='equity-empty' x='490' y='150' text-anchor='middle' fill='rgba(24,34,44,0.52)' font-size='18'>????????</text>
+          <text id='equity-empty' x='490' y='150' text-anchor='middle' fill='rgba(24,34,44,0.52)' font-size='18'>等待历史净值累积</text>
         </svg>
         <div id='chart-tooltip' class='chart-tooltip'></div>
         <div class='chart-summary'>
-          <div><strong>????</strong><span id='chart-latest'>--</span></div>
-          <div><strong>????</strong><span id='chart-change'>--</span></div>
-          <div><strong>????</strong><span id='chart-high'>--</span></div>
-          <div><strong>????</strong><span id='chart-low'>--</span></div>
+          <div><strong>最新净值</strong><span id='chart-latest'>--</span></div>
+          <div><strong>区间涨跌</strong><span id='chart-change'>--</span></div>
+          <div><strong>区间最高</strong><span id='chart-high'>--</span></div>
+          <div><strong>区间最低</strong><span id='chart-low'>--</span></div>
         </div>
       </div>
     </section>
 
     <section class='tables'>
       <div class='panel'>
-        <h3>??</h3>
+        <h3>持仓</h3>
         <table>
-          <thead><tr><th>??</th><th>??</th><th>??</th><th>??</th><th>???</th><th>??</th><th>??</th><th>??</th><th>???</th></tr></thead>
+          <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>数量</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>浮盈亏</th></tr></thead>
           <tbody id='positions-body'>{positions_html}</tbody>
         </table>
       </div>
       <div class='panel'>
-        <h3>???(? 10)</h3>
+        <h3>观察池（前 10）</h3>
         <table>
-          <thead><tr><th>??</th><th>??</th><th>??</th><th>??</th><th>??</th><th>24h</th><th>24h???</th><th>??</th></tr></thead>
+          <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>来源</th><th>价格</th><th>24h</th><th>24h成交额</th><th>排名</th></tr></thead>
           <tbody id='watchlist-body'>{watchlist_html}</tbody>
         </table>
       </div>
       <div class='panel'>
         <div class='panel-tools'>
-          <h3 style='margin:0'>????</h3>
-          <label>??
+          <h3 style='margin:0'>成交明细</h3>
+          <label>条数
             <select id='trades-limit' class='select'>
               <option value='500' selected>500</option>
               <option value='1000'>1000</option>
@@ -197,21 +199,21 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         </div>
         <div class='scroll-box'>
           <table>
-            <thead><tr><th>??</th><th>??</th><th>??</th><th>??</th><th>??</th><th>??</th><th>??</th><th>???</th><th>??</th></tr></thead>
-            <tbody id='trades-body'><tr><td colspan='9'>???...</td></tr></tbody>
+            <thead><tr><th>时间</th><th>标的</th><th>市场</th><th>杠杆</th><th>方向</th><th>数量</th><th>价格</th><th>已实现</th><th>备注</th></tr></thead>
+            <tbody id='trades-body'><tr><td colspan='9'>加载中...</td></tr></tbody>
           </table>
         </div>
       </div>
       <div class='panel'>
-        <h3>?????(????)</h3>
+        <h3>每小时报告（最新快照）</h3>
         <pre>{report}</pre>
       </div>
     </section>
 
     <section class='panel' style='margin-top:16px;'>
       <div class='panel-tools'>
-        <h3 style='margin:0'>????</h3>
-        <label>??
+        <h3 style='margin:0'>运行日志</h3>
+        <label>条数
           <select id='logs-limit' class='select'>
             <option value='500' selected>500</option>
             <option value='1000'>1000</option>
@@ -219,9 +221,9 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
             <option value='5000'>5000</option>
           </select>
         </label>
-        <button id='copy-logs' class='btn'>??????</button>
+        <button id='copy-logs' class='btn'>一键复制日志</button>
       </div>
-      <div id='log-box' class='log-box'>???...</div>
+      <div id='log-box' class='log-box'>加载中...</div>
     </section>
   </div>
 
@@ -253,21 +255,38 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       return `${{value.toFixed(2)}}${{suffix}}`;
     }}
 
+    const displayTimeZone = 'Asia/Shanghai';
+
+    function getTimeParts(ts) {{
+      const parts = new Intl.DateTimeFormat('zh-CN', {{
+        timeZone: displayTimeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }}).formatToParts(new Date(ts));
+      return Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    }}
+
     function formatTime(ts, windowKey) {{
-      const d = new Date(ts);
+      const parts = getTimeParts(ts);
       if (windowKey === '1w' || windowKey === '1d') {{
-        return `${{d.getUTCMonth()+1}}-${{d.getUTCDate()}} ${{String(d.getUTCHours()).padStart(2,'0')}}:${{String(d.getUTCMinutes()).padStart(2,'0')}}`;
+        return `${{parts.month}}-${{parts.day}} ${{parts.hour}}:${{parts.minute}}`;
       }}
-      return `${{String(d.getUTCHours()).padStart(2,'0')}}:${{String(d.getUTCMinutes()).padStart(2,'0')}}:${{String(d.getUTCSeconds()).padStart(2,'0')}}`;
+      return `${{parts.hour}}:${{parts.minute}}:${{parts.second}}`;
+    }}
+
+    function formatDateTime(ts) {{
+      const parts = getTimeParts(ts);
+      return `${{parts.year}}-${{parts.month}}-${{parts.day}} ${{parts.hour}}:${{parts.minute}}:${{parts.second}}`;
     }}
 
     function formatRange(startMs, endMs) {{
-      const fmt = (ms) => {{
-        const d = new Date(ms);
-        return `${{String(d.getUTCMonth() + 1).padStart(2, '0')}}-${{String(d.getUTCDate()).padStart(2, '0')}} ` +
-          `${{String(d.getUTCHours()).padStart(2, '0')}}:${{String(d.getUTCMinutes()).padStart(2, '0')}}:${{String(d.getUTCSeconds()).padStart(2, '0')}} UTC`;
-      }};
-      return `${{fmt(startMs)}} ? ${{fmt(endMs)}}`;
+      const fmt = (ms) => `${{formatDateTime(ms)}} 北京时间`;
+      return `${{fmt(startMs)}} 至 ${{fmt(endMs)}}`;
     }}
 
     function clampViewport(windowKey, endMs) {{
@@ -349,11 +368,11 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         line.setAttribute('d', '');
         area.setAttribute('d', '');
         empty.style.display = 'block';
-        rangeMeta.textContent = '????:?????';
+        rangeMeta.textContent = '当前窗口：无可用数据';
         return;
       }}
       empty.style.display = 'none';
-      rangeMeta.textContent = `????:${{formatRange(result.startMs, result.endMs)}}`;
+      rangeMeta.textContent = `当前窗口：${{formatRange(result.startMs, result.endMs)}}`;
 
       const minValue = Math.min(...points.map((point) => point.equity));
       const maxValue = Math.max(...points.map((point) => point.equity));
@@ -422,7 +441,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         dot.addEventListener('mouseenter', () => {{
           tooltip.style.display = 'block';
           const hoverTs = item.point.bucketTs || item.point.tsMs;
-          tooltip.innerHTML = `??: ${{formatTime(hoverTs, windowKey)}}<br>??: ${{item.point.equity.toFixed(2)}}`;
+          tooltip.innerHTML = `时间: ${{formatDateTime(hoverTs)}}<br>净值: ${{item.point.equity.toFixed(2)}}`;
           crosshair.style.display = 'block';
           crosshair.setAttribute('x1', String(item.x));
           crosshair.setAttribute('x2', String(item.x));
@@ -472,17 +491,17 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 
     async function loadTrades(limit) {{
       const body = document.getElementById('trades-body');
-      body.innerHTML = `<tr><td colspan='9'>???...</td></tr>`;
+      body.innerHTML = `<tr><td colspan='9'>加载中...</td></tr>`;
       try {{
         const response = await fetch(`/api/trades?limit=${{limit}}`);
         const payload = await response.json();
         if (!payload.items || !payload.items.length) {{
-          body.innerHTML = `<tr><td colspan='9'>????</td></tr>`;
+          body.innerHTML = `<tr><td colspan='9'>暂无成交</td></tr>`;
           return;
         }}
         body.innerHTML = payload.items.map((trade) => `
           <tr data-ts="${{new Date(trade.created_at).getTime()}}">
-            <td>${{new Date(trade.created_at).toISOString().replace('T', ' ').replace('Z', ' UTC')}}</td>
+            <td>${{formatDateTime(trade.created_at)}}</td>
             <td>${{trade.symbol}}</td>
             <td>${{trade.market_type}}</td>
             <td>${{trade.leverage}}x</td>
@@ -494,18 +513,18 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           </tr>
         `).join('');
       }} catch (_) {{
-        body.innerHTML = `<tr><td colspan='9'>????????</td></tr>`;
+        body.innerHTML = `<tr><td colspan='9'>成交明细加载失败</td></tr>`;
       }}
     }}
 
     async function loadLogs(limit) {{
       const box = document.getElementById('log-box');
-      box.textContent = '???...';
+      box.textContent = '加载中...';
       try {{
         const response = await fetch(`/api/logs/tail?lines=${{limit}}`);
         box.textContent = await response.text();
       }} catch (_) {{
-        box.textContent = '??????';
+        box.textContent = '日志加载失败';
       }}
     }}
 
@@ -569,9 +588,9 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       const content = document.getElementById('log-box').textContent || '';
       try {{
         await navigator.clipboard.writeText(content);
-        alert('?????????');
+        alert('日志已复制到剪贴板');
       }} catch (_) {{
-        alert('????,?????');
+        alert('复制失败，请手动复制');
       }}
     }});
 
@@ -586,8 +605,8 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       if (!el) return;
       const secs = Math.round((Date.now() - lastUpdatedAt) / 1000);
       el.textContent = secs < 60
-        ? `????? ${{secs}} ??`
-        : `????? ${{Math.floor(secs / 60)}} ???`;
+        ? `数据更新于 ${{secs}} 秒前`
+        : `数据更新于 ${{Math.floor(secs / 60)}} 分钟前`;
     }}
 
     function renderPositionRow(p) {{
@@ -640,19 +659,17 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         riskEl.textContent = acc.risk_status.message;
         document.getElementById('cycle-message').textContent = data.message || '--';
 
-        document.getElementById('strategy-insight').textContent = state.strategy_insight || '??';
+        document.getElementById('strategy-insight').textContent = state.strategy_insight || '暂无';
         const genAt = new Date(state.generated_at);
-        document.getElementById('report-time').textContent =
-          `${{genAt.getUTCFullYear()}}-${{String(genAt.getUTCMonth() + 1).padStart(2, '0')}}-${{String(genAt.getUTCDate()).padStart(2, '0')}} ` +
-          `${{String(genAt.getUTCHours()).padStart(2, '0')}}:${{String(genAt.getUTCMinutes()).padStart(2, '0')}}:${{String(genAt.getUTCSeconds()).padStart(2, '0')}}`;
+        document.getElementById('report-time').textContent = formatDateTime(genAt);
 
         document.getElementById('positions-body').innerHTML = state.positions && state.positions.length
           ? state.positions.map(renderPositionRow).join('')
-          : "<tr><td colspan='9'>?????</td></tr>";
+          : "<tr><td colspan='9'>当前无持仓</td></tr>";
 
         document.getElementById('watchlist-body').innerHTML = state.watchlist && state.watchlist.length
           ? state.watchlist.map(renderWatchlistRow).join('')
-          : "<tr><td colspan='8'>?????</td></tr>";
+          : "<tr><td colspan='8'>观察池为空</td></tr>";
 
         if (state.equity_history && state.equity_history.length) {{
           const prevMaxTs = historyMaxTs;
@@ -676,7 +693,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         loadLogs(parseInt(logsLimitSelect.value));
         lastUpdatedAt = Date.now();
       }} catch (_) {{
-        // ????????
+        // 静默忽略刷新错误
       }}
     }}
 
