@@ -1,6 +1,8 @@
-from functools import lru_cache
-from pydantic import BaseModel, Field
 import os
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import BaseModel, Field
 
 from dotenv import load_dotenv
 
@@ -13,9 +15,14 @@ class Settings(BaseModel):
     trading_mode: str = Field(default="SIMULATION")
     initial_balance_usdt: float = 10000.0
     cycle_interval_seconds: int = 30
-    reports_dir: str = "reports"
-    logs_dir: str = "logs"
+    persistent_data_dir: str = "data"
+    reports_dir: str = "data/reports"
+    logs_dir: str = "data/logs"
+    equity_history_file: str = "data/history/equity-history.jsonl"
     report_interval_minutes: int = 60
+    storage_min_free_mb: int = 1500
+    storage_retention_days: int = 30
+    storage_low_space_retention_days: int = 7
     max_drawdown_pct: float = 15.0
     max_daily_drawdown_pct: float = 5.0
     max_trade_loss_pct: float = 1.0
@@ -30,16 +37,26 @@ class Settings(BaseModel):
     def simulation_only(self) -> bool:
         return self.trading_mode.upper() == "SIMULATION"
 
+    @property
+    def equity_history_path(self) -> str:
+        return self.equity_history_file or str(Path(self.persistent_data_dir) / "history" / "equity-history.jsonl")
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    persistent_data_dir = os.getenv("PERSISTENT_DATA_DIR", "data")
     return Settings(
         trading_mode=os.getenv("TRADING_MODE", "SIMULATION"),
         initial_balance_usdt=float(os.getenv("INITIAL_BALANCE_USDT", "10000")),
         cycle_interval_seconds=int(os.getenv("CYCLE_INTERVAL_SECONDS", "30")),
-        reports_dir=os.getenv("REPORTS_DIR", "reports"),
-        logs_dir=os.getenv("LOGS_DIR", "logs"),
+        persistent_data_dir=persistent_data_dir,
+        reports_dir=os.getenv("REPORTS_DIR", str(Path(persistent_data_dir) / "reports")),
+        logs_dir=os.getenv("LOGS_DIR", str(Path(persistent_data_dir) / "logs")),
+        equity_history_file=os.getenv("EQUITY_HISTORY_FILE", str(Path(persistent_data_dir) / "history" / "equity-history.jsonl")),
         report_interval_minutes=int(os.getenv("REPORT_INTERVAL_MINUTES", "60")),
+        storage_min_free_mb=int(os.getenv("STORAGE_MIN_FREE_MB", "1500")),
+        storage_retention_days=int(os.getenv("STORAGE_RETENTION_DAYS", "30")),
+        storage_low_space_retention_days=int(os.getenv("STORAGE_LOW_SPACE_RETENTION_DAYS", "7")),
         max_drawdown_pct=float(os.getenv("MAX_DRAWDOWN_PCT", "15")),
         max_daily_drawdown_pct=float(os.getenv("MAX_DAILY_DRAWDOWN_PCT", "5")),
         max_trade_loss_pct=float(os.getenv("MAX_TRADE_LOSS_PCT", "1")),

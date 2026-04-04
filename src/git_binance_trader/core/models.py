@@ -33,6 +33,22 @@ class SymbolSnapshot(BaseModel):
     data_source: str = "binance-spot"
 
 
+class EquityPoint(BaseModel):
+    timestamp: datetime
+    equity: float
+    cash: float
+    margin_used: float
+    position_value: float
+
+
+class StorageStatus(BaseModel):
+    path: str
+    total_mb: float
+    free_mb: float
+    min_free_mb: int
+    cleanup_required: bool = False
+
+
 class Position(BaseModel):
     symbol: str
     quantity: float
@@ -100,5 +116,7 @@ class DashboardState(BaseModel):
     positions: list[Position]
     trades: list[Trade]
     watchlist: list[SymbolSnapshot]
+    equity_history: list[EquityPoint] = Field(default_factory=list)
+    storage: StorageStatus | None = None
     strategy_insight: str = ""
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -6,10 +6,11 @@ from pathlib import Path
 
 from git_binance_trader.config import get_settings
 from git_binance_trader.core.exchange import SimulationExchange
-from git_binance_trader.core.models import AccountSnapshot, DashboardState
+from git_binance_trader.core.models import AccountSnapshot, DashboardState, EquityPoint
 from git_binance_trader.core.risk import RiskManager
 from git_binance_trader.core.strategy import OpportunityStrategy
 from git_binance_trader.services.binance_market_data import BinanceMarketDataService
+from git_binance_trader.services.history import EquityHistoryStore
 from git_binance_trader.services.logging_setup import get_strategy_logger
 from git_binance_trader.services.reporter import DailyReporter
 
@@ -22,6 +23,7 @@ class TradingOrchestrator:
         self.market_data = BinanceMarketDataService(self.settings)
         self.strategy = OpportunityStrategy()
         self.reporter = DailyReporter()
+        self.history_store = EquityHistoryStore(self.settings)
         self._lock = asyncio.Lock()
         self._last_state: DashboardState | None = None
         self._last_report = ""
@@ -73,19 +75,32 @@ class TradingOrchestrator:
                 status=self.exchange.status,
                 risk_status=risk_status,
             )
+            now_ts = datetime.now(timezone.utc)
+            self.history_store.append(
+                EquityPoint(
+                    timestamp=now_ts,
+                    equity=metrics["equity"],
+                    cash=metrics["cash"],
+                    margin_used=metrics["margin_used"],
+                    position_value=metrics["position_value"],
+                )
+            )
             state = DashboardState(
                 account=account,
                 positions=list(self.exchange.positions.values()),
                 trades=list(reversed(self.exchange.trades[-10:])),
                 watchlist=watchlist[:10],
+                equity_history=self.history_store.load(since=now_ts - timedelta(days=7)),
+                storage=self.history_store.storage_status(),
                 strategy_insight=strategy_insight,
+                generated_at=now_ts,
             )
             self._last_state = state
-            now_ts = datetime.now(timezone.utc)
             self._last_report = self.reporter.build_report(state, now=now_ts)
             self._last_cycle_at = now_ts
             self._write_report_snapshot(self._last_report)
             self._write_hourly_report_if_due(self._last_report, now_ts)
+            self.history_store.ensure_headroom()
             self._log_cycle(state, strategy_insight)
             return state
 

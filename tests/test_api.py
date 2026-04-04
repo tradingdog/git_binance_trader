@@ -21,6 +21,8 @@ def test_dashboard_endpoint() -> None:
     assert "state" in payload
     assert payload["state"]["account"]["status"] in {"running", "paused", "halted"}
     assert "margin_used" in payload["state"]["account"]
+    assert "equity_history" in payload["state"]
+    assert "storage" in payload["state"]
     if payload["state"]["watchlist"]:
         assert "market_type" in payload["state"]["watchlist"][0]
         assert "leverage" in payload["state"]["watchlist"][0]
