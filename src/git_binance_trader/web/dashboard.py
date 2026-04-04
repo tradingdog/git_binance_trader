@@ -6,6 +6,7 @@ from git_binance_trader.core.models import DashboardState
 
 
 def render_dashboard(state: DashboardState, message: str, report: str) -> str:
+    generated_at_iso = state.generated_at.isoformat()
     history_payload = json.dumps(
         [
             {
@@ -76,6 +77,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .chart-button {{ border: 1px solid var(--line); border-radius: 999px; padding: 10px 14px; cursor: pointer; font-weight: 700; background: rgba(255,255,255,0.78); color: var(--ink); }}
     .chart-button.active {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
     .chart-surface {{ position: relative; border-radius: 18px; border: 1px solid var(--line); background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(240,201,184,0.28)); padding: 12px; }}
+    .chart-surface.dragging {{ cursor: grabbing; }}
     .chart-svg {{ width: 100%; height: 300px; display: block; }}
     .chart-tooltip {{ position: absolute; pointer-events: none; display: none; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; box-shadow: 0 8px 20px rgba(0,0,0,0.12); font-size: 12px; }}
     .chart-summary {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }}
@@ -83,6 +85,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .chart-summary strong {{ display: block; font-size: 12px; color: rgba(24,34,44,0.6); }}
     .chart-summary span {{ display: block; margin-top: 8px; font-size: 22px; font-weight: 700; }}
     .scroll-box {{ max-height: 540px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; }}
+    .scroll-box tbody tr.highlight {{ background: rgba(182,95,58,0.12); }}
     .log-box {{ max-height: 540px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 12px; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; line-height: 1.5; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
     th, td {{ padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; }}
@@ -128,6 +131,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         <div>
           <h3 style='margin:0 0 6px'>净值曲线</h3>
           <div class='meta'>支持 1 小时、4 小时、日线、周线切换。{storage_meta}</div>
+          <div id='chart-range-meta' class='meta'>当前窗口：--</div>
         </div>
         <div class='chart-actions'>
           <button class='chart-button active' data-window='1h'>1小时</button>
@@ -222,12 +226,26 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 
   <script>
     const equityHistory = {history_payload};
+    const serverNowMs = new Date('{generated_at_iso}').getTime();
     const windowConfig = {{
       '1h': {{ spanMs: 60 * 60 * 1000, bucketMs: 60 * 1000 }},
       '4h': {{ spanMs: 4 * 60 * 60 * 1000, bucketMs: 5 * 60 * 1000 }},
-      '1d': {{ spanMs: 24 * 60 * 60 * 1000, bucketMs: 15 * 60 * 1000 }},
-      '1w': {{ spanMs: 7 * 24 * 60 * 60 * 1000, bucketMs: 60 * 60 * 1000 }},
+      '1d': {{ spanMs: 24 * 60 * 60 * 1000, bucketMs: 60 * 60 * 1000 }},
+      '1w': {{ spanMs: 7 * 24 * 60 * 60 * 1000, bucketMs: 6 * 60 * 60 * 1000 }},
     }};
+    const sortedHistory = equityHistory
+      .map((point) => ({{ ...point, tsMs: new Date(point.timestamp).getTime() }}))
+      .filter((point) => Number.isFinite(point.tsMs))
+      .sort((a, b) => a.tsMs - b.tsMs);
+    const historyMinTs = sortedHistory.length ? sortedHistory[0].tsMs : serverNowMs;
+    const historyMaxTs = sortedHistory.length ? sortedHistory[sortedHistory.length - 1].tsMs : serverNowMs;
+    const viewportEndByWindow = {{
+      '1h': Math.max(serverNowMs, historyMaxTs),
+      '4h': Math.max(serverNowMs, historyMaxTs),
+      '1d': Math.max(serverNowMs, historyMaxTs),
+      '1w': Math.max(serverNowMs, historyMaxTs),
+    }};
+    let activeWindowKey = '1h';
 
     function formatMetric(value, suffix = '') {{
       if (!Number.isFinite(value)) return '--';
@@ -242,24 +260,59 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       return `${{String(d.getUTCHours()).padStart(2,'0')}}:${{String(d.getUTCMinutes()).padStart(2,'0')}}:${{String(d.getUTCSeconds()).padStart(2,'0')}}`;
     }}
 
-    function bucketize(points, spanMs, bucketMs) {{
-      if (!points.length) return [];
-      const newestTs = new Date(points[points.length - 1].timestamp).getTime();
-      const startTs = newestTs - spanMs;
-      const buckets = new Map();
-      for (const point of points) {{
-        const ts = new Date(point.timestamp).getTime();
-        if (ts < startTs) continue;
-        const bucketKey = Math.floor(ts / bucketMs) * bucketMs;
-        buckets.set(bucketKey, {{ ...point, bucketTs: bucketKey }});
+    function formatRange(startMs, endMs) {{
+      const fmt = (ms) => {{
+        const d = new Date(ms);
+        return `${{String(d.getUTCMonth() + 1).padStart(2, '0')}}-${{String(d.getUTCDate()).padStart(2, '0')}} ` +
+          `${{String(d.getUTCHours()).padStart(2, '0')}}:${{String(d.getUTCMinutes()).padStart(2, '0')}}:${{String(d.getUTCSeconds()).padStart(2, '0')}} UTC`;
+      }};
+      return `${{fmt(startMs)}} 至 ${{fmt(endMs)}}`;
+    }}
+
+    function clampViewport(windowKey, endMs) {{
+      const spanMs = windowConfig[windowKey].spanMs;
+      const maxEnd = Math.max(serverNowMs, historyMaxTs);
+      const minEnd = historyMinTs + spanMs;
+      if (minEnd >= maxEnd) {{
+        return maxEnd;
       }}
-      const aggregated = Array.from(buckets.values()).sort((left, right) => left.bucketTs - right.bucketTs);
-      return aggregated.length ? aggregated : points.slice(-1);
+      return Math.min(maxEnd, Math.max(minEnd, endMs));
+    }}
+
+    function seriesForWindow(windowKey) {{
+      const config = windowConfig[windowKey];
+      const endMs = clampViewport(windowKey, viewportEndByWindow[windowKey] ?? Math.max(serverNowMs, historyMaxTs));
+      viewportEndByWindow[windowKey] = endMs;
+      const startMs = endMs - config.spanMs;
+      if (!sortedHistory.length) {{
+        return {{ points: [], startMs, endMs, bucketMs: config.bucketMs }};
+      }}
+
+      const points = [];
+      let cursor = 0;
+      let lastKnown = null;
+      while (cursor < sortedHistory.length && sortedHistory[cursor].tsMs <= startMs) {{
+        lastKnown = sortedHistory[cursor];
+        cursor += 1;
+      }}
+
+      const firstBucket = Math.floor(startMs / config.bucketMs) * config.bucketMs;
+      for (let bucketTs = firstBucket; bucketTs <= endMs; bucketTs += config.bucketMs) {{
+        while (cursor < sortedHistory.length && sortedHistory[cursor].tsMs <= bucketTs) {{
+          lastKnown = sortedHistory[cursor];
+          cursor += 1;
+        }}
+        if (lastKnown) {{
+          points.push({{ ...lastKnown, bucketTs, synthetic: lastKnown.tsMs !== bucketTs }});
+        }}
+      }}
+
+      return {{ points, startMs, endMs, bucketMs: config.bucketMs }};
     }}
 
     function drawChart(windowKey) {{
-      const config = windowConfig[windowKey] || windowConfig['1h'];
-      const points = bucketize(equityHistory, config.spanMs, config.bucketMs);
+      const result = seriesForWindow(windowKey);
+      const points = result.points;
       const width = 980;
       const height = 300;
       const left = 58;
@@ -277,6 +330,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       const tooltip = document.getElementById('chart-tooltip');
       const chartSurface = document.getElementById('chart-surface');
       const crosshair = document.getElementById('equity-crosshair');
+      const rangeMeta = document.getElementById('chart-range-meta');
 
       grid.innerHTML = '';
       yLabels.innerHTML = '';
@@ -294,9 +348,11 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         line.setAttribute('d', '');
         area.setAttribute('d', '');
         empty.style.display = 'block';
+        rangeMeta.textContent = '当前窗口：无可用数据';
         return;
       }}
       empty.style.display = 'none';
+      rangeMeta.textContent = `当前窗口：${{formatRange(result.startMs, result.endMs)}}`;
 
       const minValue = Math.min(...points.map((point) => point.equity));
       const maxValue = Math.max(...points.map((point) => point.equity));
@@ -337,7 +393,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         xText.setAttribute('x', String(x));
         xText.setAttribute('y', String(height - 10));
         xText.setAttribute('text-anchor', 'middle');
-        xText.textContent = formatTime(points[idx].timestamp, windowKey);
+        xText.textContent = formatTime(points[idx].bucketTs || points[idx].timestamp, windowKey);
         xLabels.appendChild(xText);
       }}
 
@@ -364,10 +420,12 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 
         dot.addEventListener('mouseenter', () => {{
           tooltip.style.display = 'block';
-          tooltip.innerHTML = `时间: ${{formatTime(item.point.timestamp, windowKey)}}<br>净值: ${{item.point.equity.toFixed(2)}}`;
+          const hoverTs = item.point.bucketTs || item.point.tsMs;
+          tooltip.innerHTML = `时间: ${{formatTime(hoverTs, windowKey)}}<br>净值: ${{item.point.equity.toFixed(2)}}`;
           crosshair.style.display = 'block';
           crosshair.setAttribute('x1', String(item.x));
           crosshair.setAttribute('x2', String(item.x));
+          highlightTradeRows(hoverTs, result.bucketMs);
         }});
         dot.addEventListener('mousemove', (event) => {{
           const rect = chartSurface.getBoundingClientRect();
@@ -379,6 +437,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         dot.addEventListener('mouseleave', () => {{
           tooltip.style.display = 'none';
           crosshair.style.display = 'none';
+          highlightTradeRows(null, result.bucketMs);
         }});
 
         pointsLayer.appendChild(dot);
@@ -393,6 +452,23 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       document.getElementById('chart-low').textContent = formatMetric(minValue);
     }}
 
+    function highlightTradeRows(centerMs, bucketMs) {{
+      const rows = Array.from(document.querySelectorAll('#trades-body tr[data-ts]'));
+      for (const row of rows) {{
+        row.classList.remove('highlight');
+      }}
+      if (!Number.isFinite(centerMs)) {{
+        return;
+      }}
+      const range = Math.max(bucketMs / 2, 60 * 1000);
+      for (const row of rows) {{
+        const ts = Number(row.dataset.ts);
+        if (Number.isFinite(ts) && Math.abs(ts - centerMs) <= range) {{
+          row.classList.add('highlight');
+        }}
+      }}
+    }}
+
     async function loadTrades(limit) {{
       const body = document.getElementById('trades-body');
       body.innerHTML = `<tr><td colspan='9'>加载中...</td></tr>`;
@@ -404,7 +480,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           return;
         }}
         body.innerHTML = payload.items.map((trade) => `
-          <tr>
+          <tr data-ts="${{new Date(trade.created_at).getTime()}}">
             <td>${{new Date(trade.created_at).toISOString().replace('T', ' ').replace('Z', ' UTC')}}</td>
             <td>${{trade.symbol}}</td>
             <td>${{trade.market_type}}</td>
@@ -434,6 +510,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 
     const chartButtons = Array.from(document.querySelectorAll('.chart-button'));
     function activateWindow(windowKey) {{
+      activeWindowKey = windowKey;
       localStorage.setItem('equity-window', windowKey);
       for (const button of chartButtons) {{
         button.classList.toggle('active', button.dataset.window === windowKey);
@@ -444,6 +521,42 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     for (const button of chartButtons) {{
       button.addEventListener('click', () => activateWindow(button.dataset.window));
     }}
+
+    (function enableChartDragging() {{
+      const chartSurface = document.getElementById('chart-surface');
+      let dragging = false;
+      let dragStartX = 0;
+      let dragStartEndMs = 0;
+
+      chartSurface.addEventListener('pointerdown', (event) => {{
+        dragging = true;
+        dragStartX = event.clientX;
+        dragStartEndMs = viewportEndByWindow[activeWindowKey] ?? Math.max(serverNowMs, historyMaxTs);
+        chartSurface.classList.add('dragging');
+        chartSurface.setPointerCapture(event.pointerId);
+      }});
+
+      chartSurface.addEventListener('pointermove', (event) => {{
+        if (!dragging) return;
+        const width = Math.max(200, chartSurface.clientWidth - 78);
+        const deltaX = event.clientX - dragStartX;
+        const spanMs = windowConfig[activeWindowKey].spanMs;
+        const shiftMs = (-deltaX / width) * spanMs;
+        viewportEndByWindow[activeWindowKey] = clampViewport(activeWindowKey, dragStartEndMs + shiftMs);
+        drawChart(activeWindowKey);
+      }});
+
+      chartSurface.addEventListener('pointerup', (event) => {{
+        dragging = false;
+        chartSurface.classList.remove('dragging');
+        chartSurface.releasePointerCapture(event.pointerId);
+      }});
+
+      chartSurface.addEventListener('pointercancel', () => {{
+        dragging = false;
+        chartSurface.classList.remove('dragging');
+      }});
+    }})();
 
     const tradesLimitSelect = document.getElementById('trades-limit');
     tradesLimitSelect.addEventListener('change', () => loadTrades(tradesLimitSelect.value));
