@@ -695,7 +695,6 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         viewportEndByWindow[activeWindowKey] = clampViewport(activeWindowKey, nextEnd, targetSpanBuckets);
         drawChart(activeWindowKey);
       }}, {{ passive: false }});
-      }});
     }})();
 
     const tradesLimitSelect = document.getElementById('trades-limit');
