@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.8.14 - 2026-04-06
+- 策略引擎升级为 `adaptive_opportunity_v2`：拆分现货/永续/Alpha 三套独立评分模型，降低单一评分器在不同市场上的失真。
+- 新增热点因子：在原有动量与流动性基础上，引入 `volume_surge`、`volatility_breakout`、`cross_market_strength`、`social_heat`、`new_coin_behavior`，更聚焦短时热点和跨市场强度。
+- 新增小时级自适应调参：根据最近 1 小时平仓胜率、平均已实现盈亏、手续费总额自动收紧或放宽仓位参数，抑制高频低效换手。
+- 新增改动前后收益对比自动入库：每次小时调参都会写入 `reports/strategy-compare.jsonl`，并生成 `strategy-compare-latest.md` 与按时间戳归档的对比报告。
+- 补充回归测试：验证每轮策略执行后会自动产出参数对比报告文件。
+
 ## v0.8.13 - 2026-04-06
 - 前端布局稳定性修复：页面新增 `scrollbar-gutter: stable` 与固定纵向滚动条占位，消除软刷新时面板宽度抖动和表格区域忽宽忽窄问题。
 - 本次仅调整展示层 CSS，不改动交易、风控、撮合与数据源逻辑。

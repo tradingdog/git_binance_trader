@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -49,6 +50,8 @@ class TradingOrchestrator:
                     positions=self.exchange.positions,
                     cash=self.exchange.cash,
                     equity=equity,
+                    recent_trades=self.exchange.trades[-500:],
+                    now_ts=datetime.now(timezone.utc),
                 )
                 for trade in planned_trades:
                     has_position = any(
@@ -110,6 +113,7 @@ class TradingOrchestrator:
             self._last_cycle_at = now_ts
             self._write_report_snapshot(self._last_report)
             self._write_hourly_report_if_due(self._last_report, now_ts)
+            self._write_strategy_comparison_if_needed(state, now_ts)
             self.history_store.ensure_headroom()
             self._log_cycle(state, strategy_insight)
             return state
@@ -177,6 +181,57 @@ class TradingOrchestrator:
         hourly_path = reports_dir / f"report-{now_ts.strftime('%Y%m%d-%H00')}.md"
         hourly_path.write_text(report, encoding="utf-8")
         self._last_report_at = now_ts
+
+    def _write_strategy_comparison_if_needed(self, state: DashboardState, now_ts: datetime) -> None:
+        event = self.strategy.get_and_clear_adaptation_event()
+        if not event:
+            return
+
+        reports_dir = Path(self.settings.reports_dir)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        compare_jsonl_path = reports_dir / "strategy-compare.jsonl"
+        compare_latest_path = reports_dir / "strategy-compare-latest.md"
+        compare_hourly_path = reports_dir / f"strategy-compare-{now_ts.strftime('%Y%m%d-%H%M')}.md"
+
+        payload = {
+            "generated_at": now_ts.isoformat(),
+            "equity": state.account.equity,
+            "total_return_pct": state.account.total_return_pct,
+            "fees_paid": state.account.fees_paid,
+            "funding_paid": state.account.funding_paid,
+            "event": event,
+        }
+        with compare_jsonl_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False))
+            handle.write("\n")
+
+        before = event.get("before", {}) if isinstance(event, dict) else {}
+        after = event.get("after", {}) if isinstance(event, dict) else {}
+        metrics = event.get("metrics", {}) if isinstance(event, dict) else {}
+        lines = [
+            f"# 策略参数对比报告 {now_ts.strftime('%Y-%m-%d %H:%M UTC')}",
+            "",
+            "## 当前绩效快照",
+            f"- 账户净值: {state.account.equity:.4f}",
+            f"- 总收益率: {state.account.total_return_pct:.4f}%",
+            f"- 累计手续费: {state.account.fees_paid:.4f}",
+            f"- 累计资金费率支出: {state.account.funding_paid:.4f}",
+            "",
+            "## 本小时交易窗口",
+            f"- 平仓笔数: {metrics.get('closed_trades', 0)}",
+            f"- 胜率: {metrics.get('win_rate', 0.0)}",
+            f"- 平均已实现盈亏: {metrics.get('avg_realized_pnl', 0.0)}",
+            f"- 已实现盈亏合计: {metrics.get('realized_sum', 0.0)}",
+            f"- 手续费合计: {metrics.get('fee_sum', 0.0)}",
+            "",
+            "## 参数变更（Before -> After）",
+        ]
+        for key in sorted(set(before.keys()) | set(after.keys())):
+            lines.append(f"- {key}: {before.get(key)} -> {after.get(key)}")
+
+        report = "\n".join(lines)
+        compare_latest_path.write_text(report, encoding="utf-8")
+        compare_hourly_path.write_text(report, encoding="utf-8")
 
     def list_report_files(self) -> list[str]:
         reports_dir = Path(self.settings.reports_dir)

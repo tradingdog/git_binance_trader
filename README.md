@@ -11,8 +11,10 @@
 - Fly.io 部署骨架
 
 ## 当前策略框架
-- 机会评分：结合 24h 动量、流动性、市场类型（现货/永续/Alpha）评分筛选机会。
+- 机会评分（v2）：现货/永续/Alpha 三套独立评分模型，避免单一权重跨市场失真。
+- 热点因子：在动量与流动性基础上，新增放量强度、波动挤压突破、跨市场强弱、社交热度代理、新币行为等因子。
 - 仓位管理：限制总暴露与持仓数量，单笔风险预算默认 0.35%。
+- 小时自适应：每小时根据平仓胜率、已实现盈亏与手续费表现自动收紧或放宽关键参数（开仓阈值、持仓上限、单仓预算等）。
 - 持仓跟踪：内置止损、止盈与跟踪止盈机制，触发后自动平仓。
 - 风险兜底：继续执行全程/单日/单笔亏损红线检查，触发即停机与清仓。
 
@@ -75,6 +77,7 @@ pytest
 - 最新报告接口：`/api/reports/latest`
 - 报告列表接口：`/api/reports`
 - 运行日志接口：`/api/logs/tail`
+- 策略参数对比：每次小时级自适应后自动写入 `reports/strategy-compare.jsonl`，并产出 `reports/strategy-compare-latest.md` 便于对照改动前后收益表现。
 - 持久卷建议：Fly 使用 2GB 卷挂载到 `/data`，并设置 `PERSISTENT_DATA_DIR=/data`。
 - Fly 命令查看（示例）：
 	- `flyctl ssh console -a git-binance-trader-sim -C "ls -lah /data/reports"`
