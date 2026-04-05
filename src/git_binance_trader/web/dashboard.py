@@ -129,21 +129,21 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .chart-summary div {{ padding: 12px; border-radius: 14px; background: rgba(255,255,255,0.7); border: 1px solid var(--line); }}
     .chart-summary strong {{ display: block; font-size: 12px; color: rgba(24,34,44,0.6); }}
     .chart-summary span {{ display: block; margin-top: 8px; font-size: 22px; font-weight: 700; }}
-    .scroll-box {{ max-height: 540px; overflow: auto; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(250,246,241,0.98)); scrollbar-gutter: stable both-edges; }}
+    .scroll-box {{ max-height: 540px; overflow: auto; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(250,246,241,0.98)); scrollbar-gutter: stable; }}
     .scroll-box tbody tr.highlight {{ background: rgba(182,95,58,0.12); }}
     .log-box {{ max-height: 540px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 12px; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; line-height: 1.5; }}
-    .dashboard-table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; table-layout: auto; min-width: 100%; }}
+    .dashboard-table {{ width: 100%; border-collapse: collapse; border-spacing: 0; font-size: 13px; table-layout: auto; min-width: 100%; }}
     .positions-table {{ min-width: 940px; }}
     .watchlist-table {{ min-width: 780px; }}
     .trades-table {{ min-width: 1220px; }}
-    .dashboard-table thead th {{ position: sticky; top: 0; z-index: 1; background: rgba(249,244,238,0.96); backdrop-filter: blur(8px); font-size: 12px; letter-spacing: 0.04em; color: rgba(24,34,44,0.66); text-transform: uppercase; }}
-    .dashboard-table th, .dashboard-table td {{ padding: 12px 10px; border-bottom: 1px solid rgba(24,34,44,0.08); text-align: left; vertical-align: middle; }}
+    .dashboard-table thead th {{ position: sticky; top: 0; z-index: 1; background: #f7f3ed; font-size: 12px; letter-spacing: 0.04em; color: rgba(24,34,44,0.66); text-transform: uppercase; }}
+    .dashboard-table th, .dashboard-table td {{ padding: 12px 10px; border-bottom: 1px solid rgba(24,34,44,0.08); text-align: center; vertical-align: middle; }}
     .dashboard-table tbody tr:hover {{ background: rgba(182,95,58,0.06); }}
-    .cell-text {{ white-space: nowrap; }}
+    .cell-text {{ white-space: nowrap; text-align: center; }}
     .cell-source {{ color: rgba(24,34,44,0.72); }}
-    .cell-num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: Consolas, "SFMono-Regular", monospace; }}
+    .cell-num {{ text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: Consolas, "SFMono-Regular", monospace; }}
     .cell-symbol {{ font-weight: 700; letter-spacing: 0.01em; }}
-    .cell-note {{ min-width: 240px; max-width: 320px; white-space: normal; line-height: 1.45; color: rgba(24,34,44,0.78); }}
+    .cell-note {{ min-width: 240px; max-width: 320px; white-space: normal; line-height: 1.45; color: rgba(24,34,44,0.78); text-align: center; }}
     .table-empty {{ text-align: center; color: rgba(24,34,44,0.58); padding: 36px 12px; }}
     .value-positive {{ color: var(--good); }}
     .value-negative {{ color: var(--bad); }}
@@ -236,7 +236,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     </section>
 
     <section class='tables'>
-      <div class='panel table-panel span-7'>
+      <div class='panel table-panel span-12'>
         <h3 class='panel-title'>持仓</h3>
         <div class='scroll-box'>
           <table class='dashboard-table positions-table'>
@@ -245,7 +245,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           </table>
         </div>
       </div>
-      <div class='panel table-panel span-5'>
+      <div class='panel table-panel span-12'>
         <h3 class='panel-title'>观察池（前 10）</h3>
         <div class='scroll-box'>
           <table class='dashboard-table watchlist-table'>
@@ -254,7 +254,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           </table>
         </div>
       </div>
-      <div class='panel trade-panel span-7'>
+      <div class='panel trade-panel span-12'>
         <div class='panel-tools'>
           <h3 class='panel-title'>成交明细</h3>
           <div class='controls'>
@@ -276,7 +276,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           </table>
         </div>
       </div>
-      <div class='panel report-box span-5'>
+      <div class='panel report-box span-12'>
         <h3 class='panel-title'>每小时报告（最新快照）</h3>
         <pre>{report}</pre>
       </div>
