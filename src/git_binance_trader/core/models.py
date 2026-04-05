@@ -37,6 +37,9 @@ class SymbolSnapshot(BaseModel):
     market_type: MarketType = MarketType.spot
     leverage: int = 1
     data_source: str = "binance-spot"
+    funding_rate: float = 0.0
+    next_funding_time_ms: int = 0
+    funding_interval_hours: int = 8
 
 
 class EquityPoint(BaseModel):
@@ -66,6 +69,10 @@ class Position(BaseModel):
     take_profit: float
     highest_price: float
     entry_fee: float = 0.0
+    current_funding_rate: float = 0.0
+    next_funding_time_ms: int = 0
+    funding_interval_hours: int = 8
+    last_funding_apply_time_ms: int = 0
     risk_budget_pct: float = 0.35
 
     @property
@@ -114,6 +121,7 @@ class AccountSnapshot(BaseModel):
     unrealized_pnl: float
     realized_pnl: float
     fees_paid: float
+    funding_paid: float
     total_return_pct: float
     drawdown_pct: float
     daily_drawdown_pct: float

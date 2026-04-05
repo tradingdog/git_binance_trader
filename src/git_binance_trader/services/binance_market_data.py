@@ -27,6 +27,10 @@ class BinanceMarketDataService:
         async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
             spot_payload = await self._fetch_json_with_retry(client, "https://api.binance.com/api/v3/ticker/24hr", retries=2)
             perp_payload = await self._fetch_json_with_retry(client, "https://fapi.binance.com/fapi/v1/ticker/24hr", retries=2)
+            spot_exchange_info_payload = await self._fetch_json_with_retry(client, "https://api.binance.com/api/v3/exchangeInfo", retries=2)
+            perp_exchange_info_payload = await self._fetch_json_with_retry(client, "https://fapi.binance.com/fapi/v1/exchangeInfo", retries=2)
+            premium_payload = await self._fetch_json_with_retry(client, "https://fapi.binance.com/fapi/v1/premiumIndex", retries=2)
+            funding_info_payload = await self._fetch_json_with_retry(client, "https://fapi.binance.com/fapi/v1/fundingInfo", retries=1)
 
             # Alpha 接口波动较大，失败时不应影响主行情链路。
             alpha_token_payload = await self._fetch_json_with_retry(
@@ -51,10 +55,24 @@ class BinanceMarketDataService:
             alpha_token_payload = {}
         if not isinstance(alpha_info_payload, dict):
             alpha_info_payload = {}
+        if not isinstance(spot_exchange_info_payload, dict):
+            spot_exchange_info_payload = {}
+        if not isinstance(perp_exchange_info_payload, dict):
+            perp_exchange_info_payload = {}
+        if not isinstance(premium_payload, list):
+            premium_payload = []
+        if not isinstance(funding_info_payload, list):
+            funding_info_payload = []
+
+        # 关键风控：仅允许 Binance 官方 exchangeInfo 标记为 TRADING 的交易对进入策略池。
+        spot_trading_symbols = self._extract_spot_trading_symbols(spot_exchange_info_payload)
+        perp_trading_symbols = self._extract_perpetual_trading_symbols(perp_exchange_info_payload)
 
         spot_map: dict[str, dict] = {}
         for item in spot_payload:
             symbol = item.get("symbol", "")
+            if symbol not in spot_trading_symbols:
+                continue
             if not symbol.endswith("USDT"):
                 continue
             price = float(item.get("lastPrice", 0.0) or 0.0)
@@ -65,12 +83,29 @@ class BinanceMarketDataService:
         perp_map: dict[str, dict] = {}
         for item in perp_payload:
             symbol = item.get("symbol", "")
+            if symbol not in perp_trading_symbols:
+                continue
             if not symbol.endswith("USDT"):
                 continue
             price = float(item.get("lastPrice", 0.0) or 0.0)
             if price <= 0:
                 continue
             perp_map[symbol] = item
+
+        premium_map: dict[str, dict] = {}
+        for item in premium_payload:
+            symbol = str(item.get("symbol", ""))
+            if symbol:
+                premium_map[symbol] = item
+
+        # fundingInfo 仅返回有调整的交易对，未返回的默认按 8 小时间隔。
+        funding_interval_map: dict[str, int] = {}
+        for item in funding_info_payload:
+            symbol = str(item.get("symbol", ""))
+            if not symbol:
+                continue
+            interval_hours = int(item.get("fundingIntervalHours", 8) or 8)
+            funding_interval_map[symbol] = max(interval_hours, 1)
 
         alpha_snapshots = self._build_alpha_snapshots(alpha_token_payload, alpha_info_payload)
 
@@ -90,6 +125,7 @@ class BinanceMarketDataService:
             )
 
         for symbol, item in perp_map.items():
+            premium_item = premium_map.get(symbol, {})
             snapshots.append(
                 SymbolSnapshot(
                     symbol=symbol,
@@ -100,6 +136,9 @@ class BinanceMarketDataService:
                     market_type=MarketType.perpetual,
                     leverage=self.settings.default_perpetual_leverage,
                     data_source="binance-futures",
+                    funding_rate=float(premium_item.get("lastFundingRate", 0.0) or 0.0),
+                    next_funding_time_ms=int(premium_item.get("nextFundingTime", 0) or 0),
+                    funding_interval_hours=funding_interval_map.get(symbol, 8),
                 )
             )
 
@@ -162,4 +201,36 @@ class BinanceMarketDataService:
                 )
             )
         return snapshots
+
+    @staticmethod
+    def _extract_spot_trading_symbols(exchange_info_payload: dict) -> set[str]:
+        symbols: set[str] = set()
+        for item in exchange_info_payload.get("symbols", []) or []:
+            symbol = str(item.get("symbol", "")).upper()
+            if not symbol:
+                continue
+            if item.get("status") != "TRADING":
+                continue
+            if str(item.get("quoteAsset", "")).upper() != "USDT":
+                continue
+            if item.get("isSpotTradingAllowed") is False:
+                continue
+            symbols.add(symbol)
+        return symbols
+
+    @staticmethod
+    def _extract_perpetual_trading_symbols(exchange_info_payload: dict) -> set[str]:
+        symbols: set[str] = set()
+        for item in exchange_info_payload.get("symbols", []) or []:
+            symbol = str(item.get("symbol", "")).upper()
+            if not symbol:
+                continue
+            if item.get("status") != "TRADING":
+                continue
+            if str(item.get("quoteAsset", "")).upper() != "USDT":
+                continue
+            if str(item.get("contractType", "")).upper() != "PERPETUAL":
+                continue
+            symbols.add(symbol)
+        return symbols
 

@@ -14,7 +14,7 @@ class Settings(BaseModel):
     project_name: str = "git_binance_trader"
     trading_mode: str = Field(default="SIMULATION")
     initial_balance_usdt: float = 10000.0
-    cycle_interval_seconds: int = 30
+    cycle_interval_seconds: int = 5
     persistent_data_dir: str = "data"
     reports_dir: str = "data/reports"
     logs_dir: str = "data/logs"
@@ -54,7 +54,7 @@ def get_settings() -> Settings:
     return Settings(
         trading_mode=os.getenv("TRADING_MODE", "SIMULATION"),
         initial_balance_usdt=float(os.getenv("INITIAL_BALANCE_USDT", "10000")),
-        cycle_interval_seconds=int(os.getenv("CYCLE_INTERVAL_SECONDS", "30")),
+        cycle_interval_seconds=int(os.getenv("CYCLE_INTERVAL_SECONDS", "5")),
         persistent_data_dir=persistent_data_dir,
         reports_dir=os.getenv("REPORTS_DIR", str(Path(persistent_data_dir) / "reports")),
         logs_dir=os.getenv("LOGS_DIR", str(Path(persistent_data_dir) / "logs")),

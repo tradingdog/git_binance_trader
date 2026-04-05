@@ -13,6 +13,7 @@ class DailyReporter:
             f"- 账户净值: {state.account.equity:.2f} USDT",
             f"- 总收益率: {state.account.total_return_pct:.2f}%",
             f"- 累计手续费: {state.account.fees_paid:.4f} USDT",
+            f"- 累计资金费率支出: {state.account.funding_paid:.4f} USDT",
             f"- 全程回撤: {state.account.drawdown_pct:.2f}%",
             f"- 单日回撤: {state.account.daily_drawdown_pct:.2f}%",
             f"- 风险状态: {state.account.risk_status.message}",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from git_binance_trader.config import Settings
 from git_binance_trader.core.models import LiquidityType, MarketType, Position, Side, StrategyState, SymbolSnapshot, Trade
 from git_binance_trader.core.risk import RiskManager
@@ -12,6 +14,7 @@ class SimulationExchange:
         self.cash = settings.initial_balance_usdt
         self.realized_pnl = 0.0
         self.total_fees = 0.0
+        self.total_funding_paid = 0.0
         self.positions: dict[str, Position] = {}
         self.trades: list[Trade] = []
         self.peak_equity = settings.initial_balance_usdt
@@ -19,13 +22,22 @@ class SimulationExchange:
         self.status = StrategyState.running
         self.last_message = "系统已初始化"
 
-    def apply_market_prices(self, watchlist: list[SymbolSnapshot]) -> None:
-        price_map = {self._position_key(item.symbol, item.market_type): item.price for item in watchlist}
+    def apply_market_prices(self, watchlist: list[SymbolSnapshot], now_ts_ms: int | None = None) -> None:
+        snapshot_map = {self._position_key(item.symbol, item.market_type): item for item in watchlist}
+        now_ms = now_ts_ms if now_ts_ms is not None else int(datetime.now(timezone.utc).timestamp() * 1000)
         to_close: list[Trade] = []
         for position in self.positions.values():
             position_key = self._position_key(position.symbol, position.market_type)
-            if position_key in price_map:
-                position.current_price = price_map[position_key]
+            if position_key in snapshot_map:
+                snapshot = snapshot_map[position_key]
+                position.current_price = snapshot.price
+                if position.market_type == MarketType.perpetual:
+                    position.current_funding_rate = snapshot.funding_rate
+                    if snapshot.funding_interval_hours > 0:
+                        position.funding_interval_hours = snapshot.funding_interval_hours
+                    if snapshot.next_funding_time_ms > 0:
+                        position.next_funding_time_ms = snapshot.next_funding_time_ms
+                    self._apply_funding_if_due(position, now_ms)
                 if position.current_price > position.highest_price:
                     position.highest_price = position.current_price
                     trailing_stop = position.highest_price * 0.994
@@ -93,6 +105,7 @@ class SimulationExchange:
                 take_profit=trade.price * 1.018,
                 highest_price=trade.price,
                 entry_fee=fee_paid,
+                funding_interval_hours=8,
             )
             self.trades.append(trade)
             self.last_message = f"已模拟开仓: {trade.symbol}"
@@ -137,6 +150,7 @@ class SimulationExchange:
             "unrealized_pnl": round(unrealized_pnl, 4),
             "realized_pnl": round(self.realized_pnl, 4),
             "fees_paid": round(self.total_fees, 4),
+            "funding_paid": round(self.total_funding_paid, 4),
             "total_return_pct": round(total_return_pct, 4),
             "drawdown_pct": round(drawdown_pct, 4),
             "daily_drawdown_pct": round(daily_drawdown_pct, 4),
@@ -202,3 +216,23 @@ class SimulationExchange:
         if liquidity_type == LiquidityType.taker:
             return max(self.settings.spot_taker_fee_rate, 0.0)
         return max(self.settings.spot_maker_fee_rate, 0.0)
+
+    def _apply_funding_if_due(self, position: Position, now_ts_ms: int) -> None:
+        if position.market_type != MarketType.perpetual:
+            return
+        next_funding_time_ms = position.next_funding_time_ms
+        if next_funding_time_ms <= 0:
+            return
+        interval_hours = max(position.funding_interval_hours, 1)
+        interval_ms = interval_hours * 60 * 60 * 1000
+
+        while now_ts_ms >= next_funding_time_ms and position.last_funding_apply_time_ms < next_funding_time_ms:
+            # 当前系统只模拟单向多头：正 fundingRate 代表支付，负 fundingRate 代表收取。
+            funding_payment = position.market_value * position.current_funding_rate
+            self.cash -= funding_payment
+            self.realized_pnl -= funding_payment
+            self.total_funding_paid += funding_payment
+            position.last_funding_apply_time_ms = next_funding_time_ms
+            next_funding_time_ms += interval_ms
+
+        position.next_funding_time_ms = next_funding_time_ms

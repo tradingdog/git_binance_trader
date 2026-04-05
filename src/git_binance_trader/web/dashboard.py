@@ -821,7 +821,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     }}
 
     setInterval(updateLastUpdated, 5000);
-    setInterval(softRefresh, 30000);
+    setInterval(softRefresh, 5000);
   </script>
 </body>
 </html>

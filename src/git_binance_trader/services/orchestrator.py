@@ -78,6 +78,7 @@ class TradingOrchestrator:
                 unrealized_pnl=metrics["unrealized_pnl"],
                 realized_pnl=metrics["realized_pnl"],
                 fees_paid=metrics["fees_paid"],
+                funding_paid=metrics["funding_paid"],
                 total_return_pct=metrics["total_return_pct"],
                 drawdown_pct=metrics["drawdown_pct"],
                 daily_drawdown_pct=metrics["daily_drawdown_pct"],
