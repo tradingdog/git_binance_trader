@@ -59,12 +59,20 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     html {{ overflow-y: scroll; scrollbar-gutter: stable; }}
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--ink); background: radial-gradient(circle at top, #fff7e8 0%, #f4efe6 45%, #e6ded0 100%); }}
-    .shell {{ max-width: 1280px; margin: 0 auto; padding: 24px; }}
-    .hero {{ display: grid; gap: 16px; grid-template-columns: 1.5fr 1fr; align-items: stretch; }}
+    .shell {{ width: min(1440px, calc(100vw - 32px)); margin: 0 auto; padding: 24px 0 32px; }}
+    .hero {{ display: grid; gap: 16px; grid-template-columns: repeat(12, minmax(0, 1fr)); align-items: stretch; }}
     .panel {{ background: var(--panel); backdrop-filter: blur(14px); border: 1px solid var(--line); border-radius: 20px; padding: 20px; box-shadow: 0 12px 40px rgba(24,34,44,0.08); }}
+    .panel, .metric, .chart-panel {{ min-width: 0; }}
+    .span-12 {{ grid-column: span 12; }}
+    .span-8 {{ grid-column: span 8; }}
+    .span-7 {{ grid-column: span 7; }}
+    .span-6 {{ grid-column: span 6; }}
+    .span-5 {{ grid-column: span 5; }}
+    .span-4 {{ grid-column: span 4; }}
+    .span-3 {{ grid-column: span 3; }}
     .headline {{ font-size: 34px; margin: 0 0 8px; }}
     .subline {{ margin: 0; color: rgba(24,34,44,0.72); line-height: 1.6; }}
-    .grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 18px; }}
+    .metrics-grid {{ display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }}
     .metric {{ padding: 18px; border-radius: 18px; background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(240,201,184,0.32)); border: 1px solid var(--line); }}
     .metric strong {{ display: block; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(24,34,44,0.58); }}
     .metric span {{ display: block; margin-top: 10px; font-size: 28px; font-weight: 700; }}
@@ -74,7 +82,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .panel-note {{ margin-left: auto; font-size: 12px; color: rgba(24,34,44,0.62); }}
     .select {{ border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: #fff; }}
     .btn {{ border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: #fff; cursor: pointer; font-weight: 600; }}
-    .tables {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }}
+    .tables {{ display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; margin-top: 16px; align-items: start; }}
     .chart-panel {{ margin-top: 16px; }}
     .chart-header {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }}
     .chart-actions {{ display: flex; gap: 8px; flex-wrap: wrap; }}
@@ -92,20 +100,44 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .scroll-box {{ max-height: 540px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; }}
     .scroll-box tbody tr.highlight {{ background: rgba(182,95,58,0.12); }}
     .log-box {{ max-height: 540px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 12px; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; line-height: 1.5; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
-    th, td {{ padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; }}
-    pre {{ white-space: pre-wrap; background: #fff; padding: 16px; border-radius: 14px; border: 1px solid var(--line); }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }}
+    th, td {{ padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }}
+    pre {{ white-space: pre-wrap; background: #fff; padding: 16px; border-radius: 14px; border: 1px solid var(--line); max-width: 100%; overflow: auto; }}
     .status-good {{ color: var(--good); }}
     .status-bad {{ color: var(--bad); }}
+    .report-box {{ height: 100%; }}
+    .report-box pre {{ min-height: 540px; margin: 0; }}
+    .table-panel table thead th:nth-child(1) {{ width: 18%; }}
+    .table-panel table thead th:nth-child(2) {{ width: 12%; }}
+    .table-panel table thead th:nth-child(3) {{ width: 8%; }}
+    .table-panel table thead th:nth-child(4) {{ width: 14%; }}
+    .table-panel table thead th:nth-child(5) {{ width: 14%; }}
+    .table-panel table thead th:nth-child(6) {{ width: 14%; }}
+    .table-panel table thead th:nth-child(7) {{ width: 10%; }}
+    .table-panel table thead th:nth-child(8) {{ width: 10%; }}
+    .trade-panel table thead th:nth-child(1) {{ width: 13%; }}
+    .trade-panel table thead th:nth-child(2) {{ width: 9%; }}
+    .trade-panel table thead th:nth-child(3) {{ width: 8%; }}
+    .trade-panel table thead th:nth-child(4) {{ width: 6%; }}
+    .trade-panel table thead th:nth-child(5) {{ width: 6%; }}
+    .trade-panel table thead th:nth-child(6) {{ width: 9%; }}
+    .trade-panel table thead th:nth-child(7) {{ width: 9%; }}
+    .trade-panel table thead th:nth-child(8) {{ width: 9%; }}
+    .trade-panel table thead th:nth-child(9) {{ width: 8%; }}
+    .trade-panel table thead th:nth-child(10) {{ width: 8%; }}
+    .trade-panel table thead th:nth-child(11) {{ width: 15%; }}
     @media (max-width: 960px) {{
-      .hero, .tables, .grid, .chart-summary {{ grid-template-columns: 1fr; }}
+      .shell {{ width: min(100vw - 20px, 100%); padding: 16px 0 24px; }}
+      .hero, .tables, .metrics-grid, .chart-summary {{ grid-template-columns: 1fr; }}
+      .span-12, .span-8, .span-7, .span-6, .span-5, .span-4, .span-3 {{ grid-column: 1 / -1; }}
+      .report-box pre {{ min-height: 320px; }}
     }}
   </style>
 </head>
 <body>
   <div class='shell'>
     <section class='hero'>
-      <div class='panel'>
+      <div class='panel span-8'>
         <p style='margin:0;color:rgba(24,34,44,0.58)'>模拟资金 / 风控优先 / 禁止实盘</p>
         <h1 class='headline'>git_binance_trader 控制台</h1>
         <p class='subline'>系统仅运行在模拟盘环境，默认执行现货、永续与 Alpha（币安专门交易分类/新上市机会）统一风控框架。当前前端为观察者模式，仅展示策略结果。</p>
@@ -114,7 +146,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           <div class='meta'>报告时间（北京时间）：<span id='report-time'>{generated_at_local.strftime('%Y-%m-%d %H:%M:%S')}</span></div>
         </div>
       </div>
-      <div class='panel'>
+      <div class='panel span-4'>
         <strong>系统状态</strong>
         <h2 id='account-status' style='margin:10px 0 6px'>{state.account.status.value}</h2>
         <p id='risk-status' class='{{"status-bad" if state.account.risk_status.breached else "status-good"}}'>{state.account.risk_status.message}</p>
@@ -122,18 +154,18 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         <p class='meta' id='last-updated-label' style='margin:4px 0 0'>正在运行</p>
       </div>
     </section>
-    <section class='grid'>
-      <div class='metric'><strong>账户净值</strong><span id='metric-equity'>{state.account.equity:.2f}</span></div>
-      <div class='metric'><strong>现金余额</strong><span id='metric-cash'>{state.account.cash:.2f}</span></div>
-      <div class='metric'><strong>保证金占用</strong><span id='metric-margin'>{state.account.margin_used:.2f}</span></div>
-      <div class='metric'><strong>持仓市值</strong><span id='metric-position-val'>{state.account.position_value:.2f}</span></div>
-      <div class='metric'><strong>现金+持仓校验差</strong><span id='metric-balance-delta'>{state.account.balance_check_delta:.6f}</span></div>
-      <div class='metric'><strong>累计手续费</strong><span id='metric-fees-paid'>{state.account.fees_paid:.4f}</span></div>
-      <div class='metric'><strong>总收益率</strong><span id='metric-total-return'>{state.account.total_return_pct:.2f}%</span></div>
-      <div class='metric'><strong>全程回撤</strong><span id='metric-drawdown'>{state.account.drawdown_pct:.2f}%</span></div>
+    <section class='metrics-grid'>
+      <div class='metric span-3'><strong>账户净值</strong><span id='metric-equity'>{state.account.equity:.2f}</span></div>
+      <div class='metric span-3'><strong>现金余额</strong><span id='metric-cash'>{state.account.cash:.2f}</span></div>
+      <div class='metric span-3'><strong>保证金占用</strong><span id='metric-margin'>{state.account.margin_used:.2f}</span></div>
+      <div class='metric span-3'><strong>持仓市值</strong><span id='metric-position-val'>{state.account.position_value:.2f}</span></div>
+      <div class='metric span-3'><strong>现金+持仓校验差</strong><span id='metric-balance-delta'>{state.account.balance_check_delta:.6f}</span></div>
+      <div class='metric span-3'><strong>累计手续费</strong><span id='metric-fees-paid'>{state.account.fees_paid:.4f}</span></div>
+      <div class='metric span-3'><strong>总收益率</strong><span id='metric-total-return'>{state.account.total_return_pct:.2f}%</span></div>
+      <div class='metric span-3'><strong>全程回撤</strong><span id='metric-drawdown'>{state.account.drawdown_pct:.2f}%</span></div>
     </section>
 
-    <section class='panel chart-panel'>
+    <section class='panel chart-panel span-12'>
       <div class='chart-header'>
         <div>
           <h3 style='margin:0 0 6px'>净值曲线</h3>
@@ -175,21 +207,21 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     </section>
 
     <section class='tables'>
-      <div class='panel'>
+      <div class='panel table-panel span-7'>
         <h3>持仓</h3>
         <table>
           <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>数量</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>浮盈亏</th></tr></thead>
           <tbody id='positions-body'>{positions_html}</tbody>
         </table>
       </div>
-      <div class='panel'>
+      <div class='panel table-panel span-5'>
         <h3>观察池（前 10）</h3>
         <table>
           <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>来源</th><th>价格</th><th>24h</th><th>24h成交额</th><th>排名</th></tr></thead>
           <tbody id='watchlist-body'>{watchlist_html}</tbody>
         </table>
       </div>
-      <div class='panel'>
+      <div class='panel trade-panel span-7'>
         <div class='panel-tools'>
           <h3 style='margin:0'>成交明细</h3>
           <label>条数
@@ -209,13 +241,13 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           </table>
         </div>
       </div>
-      <div class='panel'>
+      <div class='panel report-box span-5'>
         <h3>每小时报告（最新快照）</h3>
         <pre>{report}</pre>
       </div>
     </section>
 
-    <section class='panel' style='margin-top:16px;'>
+    <section class='panel span-12' style='margin-top:16px;'>
       <div class='panel-tools'>
         <h3 style='margin:0'>运行日志</h3>
         <label>条数
