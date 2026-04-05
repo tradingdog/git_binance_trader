@@ -125,6 +125,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       <div class='metric'><strong>保证金占用</strong><span id='metric-margin'>{state.account.margin_used:.2f}</span></div>
       <div class='metric'><strong>持仓市值</strong><span id='metric-position-val'>{state.account.position_value:.2f}</span></div>
       <div class='metric'><strong>现金+持仓校验差</strong><span id='metric-balance-delta'>{state.account.balance_check_delta:.6f}</span></div>
+      <div class='metric'><strong>累计手续费</strong><span id='metric-fees-paid'>{state.account.fees_paid:.4f}</span></div>
       <div class='metric'><strong>总收益率</strong><span id='metric-total-return'>{state.account.total_return_pct:.2f}%</span></div>
       <div class='metric'><strong>全程回撤</strong><span id='metric-drawdown'>{state.account.drawdown_pct:.2f}%</span></div>
     </section>
@@ -133,7 +134,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       <div class='chart-header'>
         <div>
           <h3 style='margin:0 0 6px'>净值曲线</h3>
-          <div class='meta'>支持 1 小时、4 小时、日线、周线切换。图表时间按北京时间显示。{storage_meta}</div>
+          <div class='meta'>支持 1 小时、4 小时、日线、周线切换。图表时间按北京时间显示，净值按基金口径标准化（起点 1.0000）。{storage_meta}</div>
           <div id='chart-range-meta' class='meta'>当前窗口：--</div>
         </div>
         <div class='chart-actions'>
@@ -199,8 +200,8 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         </div>
         <div class='scroll-box'>
           <table>
-            <thead><tr><th>时间</th><th>标的</th><th>市场</th><th>杠杆</th><th>方向</th><th>数量</th><th>价格</th><th>已实现</th><th>备注</th></tr></thead>
-            <tbody id='trades-body'><tr><td colspan='9'>加载中...</td></tr></tbody>
+            <thead><tr><th>时间</th><th>标的</th><th>市场</th><th>杠杆</th><th>方向</th><th>下单类型</th><th>数量</th><th>价格</th><th>手续费</th><th>已实现</th><th>备注</th></tr></thead>
+            <tbody id='trades-body'><tr><td colspan='11'>加载中...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -254,6 +255,11 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     function formatMetric(value, suffix = '') {{
       if (!Number.isFinite(value)) return '--';
       return `${{value.toFixed(2)}}${{suffix}}`;
+    }}
+
+    function formatNav(value) {{
+      if (!Number.isFinite(value)) return '--';
+      return value.toFixed(4);
     }}
 
     const displayTimeZone = 'Asia/Shanghai';
@@ -400,8 +406,12 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       empty.style.display = 'none';
       rangeMeta.textContent = `当前窗口：${{formatRange(result.startMs, result.endMs)}}`;
 
-      const minValue = Math.min(...points.map((point) => point.equity));
-      const maxValue = Math.max(...points.map((point) => point.equity));
+      const navBaseCandidate = sortedHistory.length ? sortedHistory[0].equity : points[0].equity;
+      const navBase = Math.abs(navBaseCandidate) > 1e-12 ? navBaseCandidate : 1;
+      const navPoints = points.map((point) => ({{ ...point, nav: point.equity / navBase }}));
+
+      const minValue = Math.min(...navPoints.map((point) => point.nav));
+      const maxValue = Math.max(...navPoints.map((point) => point.nav));
       const range = Math.max(maxValue - minValue, 1);
       const plotWidth = width - left - right;
       const plotHeight = height - top - bottom;
@@ -443,9 +453,9 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         xLabels.appendChild(xText);
       }}
 
-      const coordinates = points.map((point, index) => {{
+      const coordinates = navPoints.map((point, index) => {{
         const x = xAt(index);
-        const y = yAt(point.equity);
+        const y = yAt(point.nav);
         return {{ x, y, point }};
       }});
 
@@ -467,7 +477,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         dot.addEventListener('mouseenter', () => {{
           tooltip.style.display = 'block';
           const hoverTs = item.point.bucketTs || item.point.tsMs;
-          tooltip.innerHTML = `周期: ${{formatDateTime(hoverTs)}}<br>净值: ${{item.point.equity.toFixed(2)}}`;
+          tooltip.innerHTML = `周期: ${{formatDateTime(hoverTs)}}<br>净值: ${{formatNav(item.point.nav)}}`;
           crosshair.style.display = 'block';
           crosshair.setAttribute('x1', String(item.x));
           crosshair.setAttribute('x2', String(item.x));
@@ -489,13 +499,13 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         pointsLayer.appendChild(dot);
       }}
 
-      const first = points[0].equity;
-      const last = points[points.length - 1].equity;
+      const first = navPoints[0].nav;
+      const last = navPoints[navPoints.length - 1].nav;
       const changePct = first === 0 ? 0 : ((last - first) / first) * 100;
-      document.getElementById('chart-latest').textContent = formatMetric(last);
+      document.getElementById('chart-latest').textContent = formatNav(last);
       document.getElementById('chart-change').textContent = formatMetric(changePct, '%');
-      document.getElementById('chart-high').textContent = formatMetric(maxValue);
-      document.getElementById('chart-low').textContent = formatMetric(minValue);
+      document.getElementById('chart-high').textContent = formatNav(maxValue);
+      document.getElementById('chart-low').textContent = formatNav(minValue);
     }}
 
     function highlightTradeRows(centerMs, bucketMs) {{
@@ -517,12 +527,12 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 
     async function loadTrades(limit) {{
       const body = document.getElementById('trades-body');
-      body.innerHTML = `<tr><td colspan='9'>加载中...</td></tr>`;
+      body.innerHTML = `<tr><td colspan='11'>加载中...</td></tr>`;
       try {{
         const response = await fetch(`/api/trades?limit=${{limit}}`);
         const payload = await response.json();
         if (!payload.items || !payload.items.length) {{
-          body.innerHTML = `<tr><td colspan='9'>暂无成交</td></tr>`;
+          body.innerHTML = `<tr><td colspan='11'>暂无成交</td></tr>`;
           return;
         }}
         body.innerHTML = payload.items.map((trade) => `
@@ -532,14 +542,16 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
             <td>${{trade.market_type}}</td>
             <td>${{trade.leverage}}x</td>
             <td>${{trade.side}}</td>
+            <td>${{trade.liquidity_type || 'auto'}}</td>
             <td>${{Number(trade.quantity).toFixed(6)}}</td>
             <td>${{Number(trade.price).toFixed(4)}}</td>
+            <td>${{Number(trade.fee_paid || 0).toFixed(4)}}</td>
             <td>${{Number(trade.realized_pnl).toFixed(4)}}</td>
             <td>${{trade.note || ''}}</td>
           </tr>
         `).join('');
       }} catch (_) {{
-        body.innerHTML = `<tr><td colspan='9'>成交明细加载失败</td></tr>`;
+        body.innerHTML = `<tr><td colspan='11'>成交明细加载失败</td></tr>`;
       }}
     }}
 
@@ -676,6 +688,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         document.getElementById('metric-margin').textContent = Number(acc.margin_used).toFixed(2);
         document.getElementById('metric-position-val').textContent = Number(acc.position_value).toFixed(2);
         document.getElementById('metric-balance-delta').textContent = Number(acc.balance_check_delta).toFixed(6);
+        document.getElementById('metric-fees-paid').textContent = Number(acc.fees_paid || 0).toFixed(4);
         document.getElementById('metric-total-return').textContent = Number(acc.total_return_pct).toFixed(2) + '%';
         document.getElementById('metric-drawdown').textContent = Number(acc.drawdown_pct).toFixed(2) + '%';
 

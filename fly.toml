@@ -1,0 +1,25 @@
+app = "git-binance-trader-sim"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  TRADING_MODE = "SIMULATION"
+  INITIAL_BALANCE_USDT = "10000"
+  PERSISTENT_DATA_DIR = "/data"
+  REPORTS_DIR = "/data/reports"
+  LOGS_DIR = "/data/logs"
+  EQUITY_HISTORY_FILE = "/data/history/equity-history.jsonl"
+  STORAGE_MIN_FREE_MB = "1500"
+
+[[mounts]]
+  source = "trader_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
