@@ -1,5 +1,9 @@
 # 更新日志
 
+## v0.8.13 - 2026-04-06
+- 前端布局稳定性修复：页面新增 `scrollbar-gutter: stable` 与固定纵向滚动条占位，消除软刷新时面板宽度抖动和表格区域忽宽忽窄问题。
+- 本次仅调整展示层 CSS，不改动交易、风控、撮合与数据源逻辑。
+
 ## v0.8.12 - 2026-04-05
 - 交易标的安全修复：行情服务新增 Binance `exchangeInfo` 强过滤，仅允许官方 `TRADING` 状态的 USDT 现货与 USDT 永续进入策略池，`SETTLING/DELISTING` 等状态一律禁止交易。
 - 永续资金费率接入：新增 `premiumIndex` + `fundingInfo` 数据采集，识别每个交易对的 `fundingIntervalHours`，并按真实结算时点将资金费率计入盈亏（多头正费率支出、负费率收入）。

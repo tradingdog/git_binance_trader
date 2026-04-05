@@ -56,6 +56,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       --bad: #b42318;
       --line: rgba(24,34,44,0.12);
     }}
+    html {{ overflow-y: scroll; scrollbar-gutter: stable; }}
     * {{ box-sizing: border-box; }}
     body {{ margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--ink); background: radial-gradient(circle at top, #fff7e8 0%, #f4efe6 45%, #e6ded0 100%); }}
     .shell {{ max-width: 1280px; margin: 0 auto; padding: 24px; }}
