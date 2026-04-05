@@ -71,6 +71,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .observer {{ margin-top: 18px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,0.7); }}
     .meta {{ margin-top: 8px; color: rgba(24,34,44,0.68); font-size: 13px; }}
     .panel-tools {{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }}
+    .panel-note {{ margin-left: auto; font-size: 12px; color: rgba(24,34,44,0.62); }}
     .select {{ border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: #fff; }}
     .btn {{ border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: #fff; cursor: pointer; font-weight: 600; }}
     .tables {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }}
@@ -199,6 +200,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
               <option value='5000'>5000</option>
             </select>
           </label>
+          <span id='trades-status' class='panel-note'>等待刷新</span>
         </div>
         <div class='scroll-box'>
           <table>
@@ -225,6 +227,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           </select>
         </label>
         <button id='copy-logs' class='btn'>一键复制日志</button>
+        <span id='logs-status' class='panel-note'>等待刷新</span>
       </div>
       <div id='log-box' class='log-box'>加载中...</div>
     </section>
@@ -554,14 +557,37 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       }}
     }}
 
-    async function loadTrades(limit) {{
+    let tradesRequestSeq = 0;
+    let logsRequestSeq = 0;
+    let tradesHasData = false;
+    let logsHasData = false;
+
+    function setStatusText(id, text) {{
+      const el = document.getElementById(id);
+      if (el) el.textContent = text;
+    }}
+
+    async function loadTrades(limit, options = {{}}) {{
+      const silent = Boolean(options.silent);
       const body = document.getElementById('trades-body');
-      body.innerHTML = `<tr><td colspan='11'>加载中...</td></tr>`;
+      const requestId = ++tradesRequestSeq;
+      if (!silent && !tradesHasData) {{
+        body.innerHTML = `<tr><td colspan='11'>加载中...</td></tr>`;
+      }}
+      setStatusText('trades-status', '成交更新中...');
       try {{
-        const response = await fetch(`/api/trades?limit=${{limit}}`);
+        const response = await fetch(`/api/trades?limit=${{limit}}`, {{ cache: 'no-store' }});
+        if (!response.ok) {{
+          throw new Error('trades request failed');
+        }}
         const payload = await response.json();
+        if (requestId !== tradesRequestSeq) {{
+          return;
+        }}
         if (!payload.items || !payload.items.length) {{
           body.innerHTML = `<tr><td colspan='11'>暂无成交</td></tr>`;
+          tradesHasData = false;
+          setStatusText('trades-status', '暂无成交（已同步）');
           return;
         }}
         body.innerHTML = payload.items.map((trade) => `
@@ -579,19 +605,47 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
             <td>${{trade.note || ''}}</td>
           </tr>
         `).join('');
+        tradesHasData = true;
+        setStatusText('trades-status', `成交已更新（${{payload.items.length}}条）`);
       }} catch (_) {{
-        body.innerHTML = `<tr><td colspan='11'>成交明细加载失败</td></tr>`;
+        if (requestId !== tradesRequestSeq) {{
+          return;
+        }}
+        if (!tradesHasData) {{
+          body.innerHTML = `<tr><td colspan='11'>成交明细加载失败</td></tr>`;
+        }}
+        setStatusText('trades-status', '成交刷新失败，已保留上次数据');
       }}
     }}
 
-    async function loadLogs(limit) {{
+    async function loadLogs(limit, options = {{}}) {{
+      const silent = Boolean(options.silent);
       const box = document.getElementById('log-box');
-      box.textContent = '加载中...';
+      const requestId = ++logsRequestSeq;
+      if (!silent && !logsHasData) {{
+        box.textContent = '加载中...';
+      }}
+      setStatusText('logs-status', '日志更新中...');
       try {{
-        const response = await fetch(`/api/logs/tail?lines=${{limit}}`);
-        box.textContent = await response.text();
+        const response = await fetch(`/api/logs/tail?lines=${{limit}}`, {{ cache: 'no-store' }});
+        if (!response.ok) {{
+          throw new Error('logs request failed');
+        }}
+        const text = await response.text();
+        if (requestId !== logsRequestSeq) {{
+          return;
+        }}
+        box.textContent = text;
+        logsHasData = true;
+        setStatusText('logs-status', '日志已更新');
       }} catch (_) {{
-        box.textContent = '日志加载失败';
+        if (requestId !== logsRequestSeq) {{
+          return;
+        }}
+        if (!logsHasData) {{
+          box.textContent = '日志加载失败';
+        }}
+        setStatusText('logs-status', '日志刷新失败，已保留上次数据');
       }}
     }}
 
@@ -699,10 +753,10 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     }})();
 
     const tradesLimitSelect = document.getElementById('trades-limit');
-    tradesLimitSelect.addEventListener('change', () => loadTrades(tradesLimitSelect.value));
+    tradesLimitSelect.addEventListener('change', () => loadTrades(tradesLimitSelect.value, {{ silent: false }}));
 
     const logsLimitSelect = document.getElementById('logs-limit');
-    logsLimitSelect.addEventListener('change', () => loadLogs(logsLimitSelect.value));
+    logsLimitSelect.addEventListener('change', () => loadLogs(logsLimitSelect.value, {{ silent: false }}));
 
     document.getElementById('copy-logs').addEventListener('click', async () => {{
       const content = document.getElementById('log-box').textContent || '';
@@ -715,8 +769,8 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     }});
 
     activateWindow(localStorage.getItem('equity-window') || '1h');
-    loadTrades(500);
-    loadLogs(500);
+    loadTrades(500, {{ silent: false }});
+    loadLogs(500, {{ silent: false }});
 
     let lastUpdatedAt = Date.now();
 
@@ -813,8 +867,8 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           drawChart(activeWindowKey);
         }}
 
-        loadTrades(parseInt(tradesLimitSelect.value));
-        loadLogs(parseInt(logsLimitSelect.value));
+        loadTrades(parseInt(tradesLimitSelect.value), {{ silent: true }});
+        loadLogs(parseInt(logsLimitSelect.value), {{ silent: true }});
         lastUpdatedAt = Date.now();
       }} catch (_) {{
         // 静默忽略刷新错误
