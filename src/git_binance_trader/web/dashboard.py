@@ -79,7 +79,8 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .chart-button {{ border: 1px solid var(--line); border-radius: 999px; padding: 10px 14px; cursor: pointer; font-weight: 700; background: rgba(255,255,255,0.78); color: var(--ink); }}
     .chart-button.active {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
     .chart-surface {{ position: relative; border-radius: 18px; border: 1px solid var(--line); background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(240,201,184,0.28)); padding: 12px; }}
-    .chart-surface.dragging {{ cursor: grabbing; }}
+    .chart-surface.dragging {{ cursor: grabbing; user-select: none; -webkit-user-select: none; }}
+    body.chart-no-select, body.chart-no-select * {{ user-select: none !important; -webkit-user-select: none !important; }}
     .chart-svg {{ width: 100%; height: 300px; display: block; }}
     .chart-tooltip {{ position: absolute; pointer-events: none; display: none; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; box-shadow: 0 8px 20px rgba(0,0,0,0.12); font-size: 12px; }}
     .chart-summary {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }}
@@ -134,7 +135,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       <div class='chart-header'>
         <div>
           <h3 style='margin:0 0 6px'>净值曲线</h3>
-          <div class='meta'>支持 1 小时、4 小时、日线、周线切换。图表时间按北京时间显示，净值按基金口径标准化（起点 1.0000）。{storage_meta}</div>
+          <div class='meta'>支持 1 小时、4 小时、日线、周线切换。图表时间按北京时间显示，净值按基金口径标准化（起点 1.0000），支持拖拽回看和滚轮缩放。{storage_meta}</div>
           <div id='chart-range-meta' class='meta'>当前窗口：--</div>
         </div>
         <div class='chart-actions'>
@@ -250,6 +251,12 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       '1d': Math.max(serverNowMs, historyMaxTs),
       '1w': Math.max(serverNowMs, historyMaxTs),
     }};
+    const viewportSpanBucketsByWindow = {{
+      '1h': windowConfig['1h'].visibleBuckets,
+      '4h': windowConfig['4h'].visibleBuckets,
+      '1d': windowConfig['1d'].visibleBuckets,
+      '1w': windowConfig['1w'].visibleBuckets,
+    }};
     let activeWindowKey = '1h';
 
     function formatMetric(value, suffix = '') {{
@@ -320,10 +327,29 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       return shifted.getTime() - displayOffsetMs;
     }}
 
-    function clampViewport(windowKey, endMs) {{
+    function spanBucketsForWindow(windowKey) {{
+      const fallback = windowConfig[windowKey].visibleBuckets;
+      const raw = viewportSpanBucketsByWindow[windowKey] ?? fallback;
+      return Math.max(3, Math.round(raw));
+    }}
+
+    function clampSpanBuckets(windowKey, spanBuckets) {{
       const config = windowConfig[windowKey];
+      const minBuckets = 3;
+      const alignedMin = alignToPeriodEnd(windowKey, historyMinTs);
+      const alignedMax = alignToPeriodEnd(windowKey, Math.max(serverNowMs, historyMaxTs));
+      const maxBucketsByHistory = Math.max(
+        config.visibleBuckets,
+        Math.floor((alignedMax - alignedMin) / config.bucketMs) + 1,
+      );
+      return Math.min(maxBucketsByHistory, Math.max(minBuckets, Math.round(spanBuckets)));
+    }}
+
+    function clampViewport(windowKey, endMs, spanBuckets) {{
+      const config = windowConfig[windowKey];
+      const clampedSpan = clampSpanBuckets(windowKey, spanBuckets ?? spanBucketsForWindow(windowKey));
       const maxEnd = alignToPeriodEnd(windowKey, Math.max(serverNowMs, historyMaxTs));
-      const minEnd = alignToPeriodEnd(windowKey, historyMinTs) + (config.visibleBuckets - 1) * config.bucketMs;
+      const minEnd = alignToPeriodEnd(windowKey, historyMinTs) + (clampedSpan - 1) * config.bucketMs;
       if (minEnd >= maxEnd) {{
         return maxEnd;
       }}
@@ -333,12 +359,14 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 
     function seriesForWindow(windowKey) {{
       const config = windowConfig[windowKey];
+      const spanBuckets = clampSpanBuckets(windowKey, spanBucketsForWindow(windowKey));
+      viewportSpanBucketsByWindow[windowKey] = spanBuckets;
       const defaultEndMs = alignToPeriodEnd(windowKey, Math.max(serverNowMs, historyMaxTs));
-      const endMs = clampViewport(windowKey, viewportEndByWindow[windowKey] ?? defaultEndMs);
+      const endMs = clampViewport(windowKey, viewportEndByWindow[windowKey] ?? defaultEndMs, spanBuckets);
       viewportEndByWindow[windowKey] = endMs;
-      const startMs = endMs - (config.visibleBuckets - 1) * config.bucketMs;
+      const startMs = endMs - (spanBuckets - 1) * config.bucketMs;
       if (!sortedHistory.length) {{
-        return {{ points: [], startMs, endMs, bucketMs: config.bucketMs }};
+        return {{ points: [], startMs, endMs, bucketMs: config.bucketMs, spanBuckets }};
       }}
 
       const points = [];
@@ -359,7 +387,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         }}
       }}
 
-      return {{ points, startMs, endMs, bucketMs: config.bucketMs }};
+      return {{ points, startMs, endMs, bucketMs: config.bucketMs, spanBuckets }};
     }}
 
     function drawChart(windowKey) {{
@@ -404,7 +432,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         return;
       }}
       empty.style.display = 'none';
-      rangeMeta.textContent = `当前窗口：${{formatRange(result.startMs, result.endMs)}}`;
+      rangeMeta.textContent = `当前窗口：${{formatRange(result.startMs, result.endMs)}} ｜ 缩放：${{result.spanBuckets}}格`;
 
       const navBaseCandidate = sortedHistory.length ? sortedHistory[0].equity : points[0].equity;
       const navBase = Math.abs(navBaseCandidate) > 1e-12 ? navBaseCandidate : 1;
@@ -585,34 +613,88 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       let dragging = false;
       let dragStartX = 0;
       let dragStartEndMs = 0;
+      let dragStartSpanBuckets = 0;
+
+      function setSelectionLock(locked) {{
+        document.body.classList.toggle('chart-no-select', locked);
+      }}
 
       chartSurface.addEventListener('pointerdown', (event) => {{
+        if (event.button !== 0) return;
+        event.preventDefault();
         dragging = true;
         dragStartX = event.clientX;
-        dragStartEndMs = viewportEndByWindow[activeWindowKey] ?? Math.max(serverNowMs, historyMaxTs);
+        dragStartSpanBuckets = spanBucketsForWindow(activeWindowKey);
+        dragStartEndMs = clampViewport(
+          activeWindowKey,
+          viewportEndByWindow[activeWindowKey] ?? Math.max(serverNowMs, historyMaxTs),
+          dragStartSpanBuckets,
+        );
         chartSurface.classList.add('dragging');
+        setSelectionLock(true);
         chartSurface.setPointerCapture(event.pointerId);
       }});
 
       chartSurface.addEventListener('pointermove', (event) => {{
         if (!dragging) return;
+        event.preventDefault();
         const width = Math.max(200, chartSurface.clientWidth - 78);
         const deltaX = event.clientX - dragStartX;
-        const spanMs = (windowConfig[activeWindowKey].visibleBuckets - 1) * windowConfig[activeWindowKey].bucketMs;
+        const spanMs = (dragStartSpanBuckets - 1) * windowConfig[activeWindowKey].bucketMs;
         const shiftMs = (-deltaX / width) * spanMs;
-        viewportEndByWindow[activeWindowKey] = clampViewport(activeWindowKey, dragStartEndMs + shiftMs);
+        viewportEndByWindow[activeWindowKey] = clampViewport(activeWindowKey, dragStartEndMs + shiftMs, dragStartSpanBuckets);
         drawChart(activeWindowKey);
       }});
 
       chartSurface.addEventListener('pointerup', (event) => {{
         dragging = false;
         chartSurface.classList.remove('dragging');
+        setSelectionLock(false);
         chartSurface.releasePointerCapture(event.pointerId);
       }});
 
       chartSurface.addEventListener('pointercancel', () => {{
         dragging = false;
         chartSurface.classList.remove('dragging');
+        setSelectionLock(false);
+      }});
+
+      chartSurface.addEventListener('lostpointercapture', () => {{
+        dragging = false;
+        chartSurface.classList.remove('dragging');
+        setSelectionLock(false);
+      }});
+
+      chartSurface.addEventListener('dragstart', (event) => {{
+        event.preventDefault();
+      }});
+
+      chartSurface.addEventListener('wheel', (event) => {{
+        event.preventDefault();
+        const config = windowConfig[activeWindowKey];
+        const currentSpanBuckets = spanBucketsForWindow(activeWindowKey);
+        const zoomStep = event.shiftKey ? 2 : 1;
+        const targetSpanBuckets = clampSpanBuckets(
+          activeWindowKey,
+          currentSpanBuckets + (event.deltaY > 0 ? zoomStep : -zoomStep),
+        );
+        if (targetSpanBuckets === currentSpanBuckets) return;
+
+        const rect = chartSurface.getBoundingClientRect();
+        const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(rect.width, 1)));
+        const currentEnd = clampViewport(
+          activeWindowKey,
+          viewportEndByWindow[activeWindowKey] ?? Math.max(serverNowMs, historyMaxTs),
+          currentSpanBuckets,
+        );
+        const currentStart = currentEnd - (currentSpanBuckets - 1) * config.bucketMs;
+        const anchorTs = currentStart + ratio * (currentSpanBuckets - 1) * config.bucketMs;
+        const nextEnd = anchorTs + (1 - ratio) * (targetSpanBuckets - 1) * config.bucketMs;
+
+        viewportSpanBucketsByWindow[activeWindowKey] = targetSpanBuckets;
+        viewportEndByWindow[activeWindowKey] = clampViewport(activeWindowKey, nextEnd, targetSpanBuckets);
+        drawChart(activeWindowKey);
+      }}, {{ passive: false }});
       }});
     }})();
 
@@ -721,10 +803,12 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           historyMaxTs = sortedHistory[sortedHistory.length - 1].tsMs;
           serverNowMs = new Date(state.generated_at).getTime();
           for (const wk of Object.keys(viewportEndByWindow)) {{
+            viewportSpanBucketsByWindow[wk] = clampSpanBuckets(wk, spanBucketsForWindow(wk));
             const currentAlignedMax = alignToPeriodEnd(wk, prevMaxTs);
             if (Math.abs(viewportEndByWindow[wk] - currentAlignedMax) < windowConfig[wk].bucketMs) {{
               viewportEndByWindow[wk] = alignToPeriodEnd(wk, Math.max(serverNowMs, historyMaxTs));
             }}
+            viewportEndByWindow[wk] = clampViewport(wk, viewportEndByWindow[wk], viewportSpanBucketsByWindow[wk]);
           }}
           drawChart(activeWindowKey);
         }}
