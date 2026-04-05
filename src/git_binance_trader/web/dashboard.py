@@ -29,15 +29,45 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
             f"可用：{state.storage.free_mb:.0f}MB ｜ 最低阈值：{state.storage.min_free_mb}MB"
         )
 
+    def pnl_class(value: float) -> str:
+      if value > 0:
+        return "value-positive"
+      if value < 0:
+        return "value-negative"
+      return "value-neutral"
+
     positions_html = "".join(
-        f"<tr><td>{position.symbol}</td><td>{position.market_type.value}</td><td>{position.leverage}x</td><td>{position.quantity}</td><td>{position.entry_price:.4f}</td><td>{position.current_price:.4f}</td><td>{position.stop_loss:.4f}</td><td>{position.take_profit:.4f}</td><td>{position.unrealized_pnl:.4f}</td></tr>"
-        for position in state.positions
-    ) or "<tr><td colspan='9'>当前无持仓</td></tr>"
+      (
+        f"<tr>"
+        f"<td class='cell-text cell-symbol'>{position.symbol}</td>"
+        f"<td class='cell-text'>{position.market_type.value}</td>"
+        f"<td class='cell-text'>{position.leverage}x</td>"
+        f"<td class='cell-num'>{position.quantity:.6f}</td>"
+        f"<td class='cell-num'>{position.entry_price:.4f}</td>"
+        f"<td class='cell-num'>{position.current_price:.4f}</td>"
+        f"<td class='cell-num'>{position.stop_loss:.4f}</td>"
+        f"<td class='cell-num'>{position.take_profit:.4f}</td>"
+        f"<td class='cell-num {pnl_class(position.unrealized_pnl)}'>{position.unrealized_pnl:.4f}</td>"
+        f"</tr>"
+      )
+      for position in state.positions
+    ) or "<tr><td colspan='9' class='table-empty'>当前无持仓</td></tr>"
 
     watchlist_html = "".join(
-        f"<tr><td>{item.symbol}</td><td>{item.market_type.value}</td><td>{item.leverage}x</td><td>{item.data_source}</td><td>{item.price:.4f}</td><td>{item.change_pct_24h:.2f}%</td><td>{item.volume_24h:.0f}</td><td>{item.market_cap_rank}</td></tr>"
-        for item in state.watchlist
-    )
+      (
+        f"<tr>"
+        f"<td class='cell-text cell-symbol'>{item.symbol}</td>"
+        f"<td class='cell-text'>{item.market_type.value}</td>"
+        f"<td class='cell-text'>{item.leverage}x</td>"
+        f"<td class='cell-text cell-source'>{item.data_source}</td>"
+        f"<td class='cell-num'>{item.price:.4f}</td>"
+        f"<td class='cell-num {pnl_class(item.change_pct_24h)}'>{item.change_pct_24h:.2f}%</td>"
+        f"<td class='cell-num'>{item.volume_24h:.0f}</td>"
+        f"<td class='cell-num'>{item.market_cap_rank}</td>"
+        f"</tr>"
+      )
+      for item in state.watchlist
+    ) or "<tr><td colspan='8' class='table-empty'>观察池为空</td></tr>"
 
     return f"""
 <!DOCTYPE html>
@@ -78,10 +108,12 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .metric span {{ display: block; margin-top: 10px; font-size: 28px; font-weight: 700; }}
     .observer {{ margin-top: 18px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,0.7); }}
     .meta {{ margin-top: 8px; color: rgba(24,34,44,0.68); font-size: 13px; }}
-    .panel-tools {{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }}
+    .panel-tools {{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content: space-between; }}
+    .panel-title {{ margin: 0; font-size: 20px; }}
     .panel-note {{ margin-left: auto; font-size: 12px; color: rgba(24,34,44,0.62); }}
     .select {{ border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: #fff; }}
     .btn {{ border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: #fff; cursor: pointer; font-weight: 600; }}
+    .controls {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
     .tables {{ display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; margin-top: 16px; align-items: start; }}
     .chart-panel {{ margin-top: 16px; }}
     .chart-header {{ display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }}
@@ -97,40 +129,37 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .chart-summary div {{ padding: 12px; border-radius: 14px; background: rgba(255,255,255,0.7); border: 1px solid var(--line); }}
     .chart-summary strong {{ display: block; font-size: 12px; color: rgba(24,34,44,0.6); }}
     .chart-summary span {{ display: block; margin-top: 8px; font-size: 22px; font-weight: 700; }}
-    .scroll-box {{ max-height: 540px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; }}
+    .scroll-box {{ max-height: 540px; overflow: auto; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(250,246,241,0.98)); scrollbar-gutter: stable both-edges; }}
     .scroll-box tbody tr.highlight {{ background: rgba(182,95,58,0.12); }}
     .log-box {{ max-height: 540px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 12px; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; line-height: 1.5; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }}
-    th, td {{ padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }}
+    .dashboard-table {{ width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; table-layout: auto; min-width: 100%; }}
+    .positions-table {{ min-width: 940px; }}
+    .watchlist-table {{ min-width: 780px; }}
+    .trades-table {{ min-width: 1220px; }}
+    .dashboard-table thead th {{ position: sticky; top: 0; z-index: 1; background: rgba(249,244,238,0.96); backdrop-filter: blur(8px); font-size: 12px; letter-spacing: 0.04em; color: rgba(24,34,44,0.66); text-transform: uppercase; }}
+    .dashboard-table th, .dashboard-table td {{ padding: 12px 10px; border-bottom: 1px solid rgba(24,34,44,0.08); text-align: left; vertical-align: middle; }}
+    .dashboard-table tbody tr:hover {{ background: rgba(182,95,58,0.06); }}
+    .cell-text {{ white-space: nowrap; }}
+    .cell-source {{ color: rgba(24,34,44,0.72); }}
+    .cell-num {{ text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: Consolas, "SFMono-Regular", monospace; }}
+    .cell-symbol {{ font-weight: 700; letter-spacing: 0.01em; }}
+    .cell-note {{ min-width: 240px; max-width: 320px; white-space: normal; line-height: 1.45; color: rgba(24,34,44,0.78); }}
+    .table-empty {{ text-align: center; color: rgba(24,34,44,0.58); padding: 36px 12px; }}
+    .value-positive {{ color: var(--good); }}
+    .value-negative {{ color: var(--bad); }}
+    .value-neutral {{ color: rgba(24,34,44,0.72); }}
     pre {{ white-space: pre-wrap; background: #fff; padding: 16px; border-radius: 14px; border: 1px solid var(--line); max-width: 100%; overflow: auto; }}
     .status-good {{ color: var(--good); }}
     .status-bad {{ color: var(--bad); }}
     .report-box {{ height: 100%; }}
     .report-box pre {{ min-height: 540px; margin: 0; }}
-    .table-panel table thead th:nth-child(1) {{ width: 18%; }}
-    .table-panel table thead th:nth-child(2) {{ width: 12%; }}
-    .table-panel table thead th:nth-child(3) {{ width: 8%; }}
-    .table-panel table thead th:nth-child(4) {{ width: 14%; }}
-    .table-panel table thead th:nth-child(5) {{ width: 14%; }}
-    .table-panel table thead th:nth-child(6) {{ width: 14%; }}
-    .table-panel table thead th:nth-child(7) {{ width: 10%; }}
-    .table-panel table thead th:nth-child(8) {{ width: 10%; }}
-    .trade-panel table thead th:nth-child(1) {{ width: 13%; }}
-    .trade-panel table thead th:nth-child(2) {{ width: 9%; }}
-    .trade-panel table thead th:nth-child(3) {{ width: 8%; }}
-    .trade-panel table thead th:nth-child(4) {{ width: 6%; }}
-    .trade-panel table thead th:nth-child(5) {{ width: 6%; }}
-    .trade-panel table thead th:nth-child(6) {{ width: 9%; }}
-    .trade-panel table thead th:nth-child(7) {{ width: 9%; }}
-    .trade-panel table thead th:nth-child(8) {{ width: 9%; }}
-    .trade-panel table thead th:nth-child(9) {{ width: 8%; }}
-    .trade-panel table thead th:nth-child(10) {{ width: 8%; }}
-    .trade-panel table thead th:nth-child(11) {{ width: 15%; }}
     @media (max-width: 960px) {{
       .shell {{ width: min(100vw - 20px, 100%); padding: 16px 0 24px; }}
       .hero, .tables, .metrics-grid, .chart-summary {{ grid-template-columns: 1fr; }}
       .span-12, .span-8, .span-7, .span-6, .span-5, .span-4, .span-3 {{ grid-column: 1 / -1; }}
       .report-box pre {{ min-height: 320px; }}
+      .panel-tools {{ align-items: flex-start; }}
+      .panel-note {{ margin-left: 0; width: 100%; }}
     }}
   </style>
 </head>
@@ -208,57 +237,65 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 
     <section class='tables'>
       <div class='panel table-panel span-7'>
-        <h3>持仓</h3>
-        <table>
-          <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>数量</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>浮盈亏</th></tr></thead>
-          <tbody id='positions-body'>{positions_html}</tbody>
-        </table>
+        <h3 class='panel-title'>持仓</h3>
+        <div class='scroll-box'>
+          <table class='dashboard-table positions-table'>
+            <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>数量</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>浮盈亏</th></tr></thead>
+            <tbody id='positions-body'>{positions_html}</tbody>
+          </table>
+        </div>
       </div>
       <div class='panel table-panel span-5'>
-        <h3>观察池（前 10）</h3>
-        <table>
-          <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>来源</th><th>价格</th><th>24h</th><th>24h成交额</th><th>排名</th></tr></thead>
-          <tbody id='watchlist-body'>{watchlist_html}</tbody>
-        </table>
+        <h3 class='panel-title'>观察池（前 10）</h3>
+        <div class='scroll-box'>
+          <table class='dashboard-table watchlist-table'>
+            <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>来源</th><th>价格</th><th>24h</th><th>24h成交额</th><th>排名</th></tr></thead>
+            <tbody id='watchlist-body'>{watchlist_html}</tbody>
+          </table>
+        </div>
       </div>
       <div class='panel trade-panel span-7'>
         <div class='panel-tools'>
-          <h3 style='margin:0'>成交明细</h3>
-          <label>条数
-            <select id='trades-limit' class='select'>
-              <option value='500' selected>500</option>
-              <option value='1000'>1000</option>
-              <option value='2000'>2000</option>
-              <option value='5000'>5000</option>
-            </select>
-          </label>
+          <h3 class='panel-title'>成交明细</h3>
+          <div class='controls'>
+            <label>条数
+              <select id='trades-limit' class='select'>
+                <option value='500' selected>500</option>
+                <option value='1000'>1000</option>
+                <option value='2000'>2000</option>
+                <option value='5000'>5000</option>
+              </select>
+            </label>
+          </div>
           <span id='trades-status' class='panel-note'>等待刷新</span>
         </div>
         <div class='scroll-box'>
-          <table>
+          <table class='dashboard-table trades-table'>
             <thead><tr><th>时间</th><th>标的</th><th>市场</th><th>杠杆</th><th>方向</th><th>下单类型</th><th>数量</th><th>价格</th><th>手续费</th><th>已实现</th><th>备注</th></tr></thead>
             <tbody id='trades-body'><tr><td colspan='11'>加载中...</td></tr></tbody>
           </table>
         </div>
       </div>
       <div class='panel report-box span-5'>
-        <h3>每小时报告（最新快照）</h3>
+        <h3 class='panel-title'>每小时报告（最新快照）</h3>
         <pre>{report}</pre>
       </div>
     </section>
 
     <section class='panel span-12' style='margin-top:16px;'>
       <div class='panel-tools'>
-        <h3 style='margin:0'>运行日志</h3>
-        <label>条数
-          <select id='logs-limit' class='select'>
-            <option value='500' selected>500</option>
-            <option value='1000'>1000</option>
-            <option value='2000'>2000</option>
-            <option value='5000'>5000</option>
-          </select>
-        </label>
-        <button id='copy-logs' class='btn'>一键复制日志</button>
+        <h3 class='panel-title'>运行日志</h3>
+        <div class='controls'>
+          <label>条数
+            <select id='logs-limit' class='select'>
+              <option value='500' selected>500</option>
+              <option value='1000'>1000</option>
+              <option value='2000'>2000</option>
+              <option value='5000'>5000</option>
+            </select>
+          </label>
+          <button id='copy-logs' class='btn'>一键复制日志</button>
+        </div>
         <span id='logs-status' class='panel-note'>等待刷新</span>
       </div>
       <div id='log-box' class='log-box'>加载中...</div>
@@ -617,24 +654,24 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           return;
         }}
         if (!payload.items || !payload.items.length) {{
-          body.innerHTML = `<tr><td colspan='11'>暂无成交</td></tr>`;
+          body.innerHTML = `<tr><td colspan='11' class='table-empty'>暂无成交</td></tr>`;
           tradesHasData = false;
           setStatusText('trades-status', '暂无成交（已同步）');
           return;
         }}
         body.innerHTML = payload.items.map((trade) => `
           <tr data-ts="${{new Date(trade.created_at).getTime()}}">
-            <td>${{formatDateTime(trade.created_at)}}</td>
-            <td>${{trade.symbol}}</td>
-            <td>${{trade.market_type}}</td>
-            <td>${{trade.leverage}}x</td>
-            <td>${{trade.side}}</td>
-            <td>${{trade.liquidity_type || 'auto'}}</td>
-            <td>${{Number(trade.quantity).toFixed(6)}}</td>
-            <td>${{Number(trade.price).toFixed(4)}}</td>
-            <td>${{Number(trade.fee_paid || 0).toFixed(4)}}</td>
-            <td>${{Number(trade.realized_pnl).toFixed(4)}}</td>
-            <td>${{trade.note || ''}}</td>
+            <td class='cell-text cell-time'>${{formatDateTime(trade.created_at)}}</td>
+            <td class='cell-text cell-symbol'>${{trade.symbol}}</td>
+            <td class='cell-text'>${{trade.market_type}}</td>
+            <td class='cell-text'>${{trade.leverage}}x</td>
+            <td class='cell-text'>${{trade.side}}</td>
+            <td class='cell-text'>${{trade.liquidity_type || 'auto'}}</td>
+            <td class='cell-num'>${{Number(trade.quantity).toFixed(6)}}</td>
+            <td class='cell-num'>${{Number(trade.price).toFixed(4)}}</td>
+            <td class='cell-num'>${{Number(trade.fee_paid || 0).toFixed(4)}}</td>
+            <td class='cell-num ${{Number(trade.realized_pnl) > 0 ? 'value-positive' : Number(trade.realized_pnl) < 0 ? 'value-negative' : 'value-neutral'}}'>${{Number(trade.realized_pnl).toFixed(4)}}</td>
+            <td class='cell-note'>${{trade.note || ''}}</td>
           </tr>
         `).join('');
         tradesHasData = true;
@@ -644,7 +681,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
           return;
         }}
         if (!tradesHasData) {{
-          body.innerHTML = `<tr><td colspan='11'>成交明细加载失败</td></tr>`;
+          body.innerHTML = `<tr><td colspan='11' class='table-empty'>成交明细加载失败</td></tr>`;
         }}
         setStatusText('trades-status', '成交刷新失败，已保留上次数据');
       }}
@@ -817,29 +854,31 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 
     function renderPositionRow(p) {{
       const pnl = ((p.current_price - p.entry_price) * p.quantity).toFixed(4);
+      const pnlClass = Number(pnl) > 0 ? 'value-positive' : Number(pnl) < 0 ? 'value-negative' : 'value-neutral';
       return `<tr>` +
-        `<td>${{p.symbol}}</td>` +
-        `<td>${{p.market_type}}</td>` +
-        `<td>${{p.leverage}}x</td>` +
-        `<td>${{p.quantity}}</td>` +
-        `<td>${{Number(p.entry_price).toFixed(4)}}</td>` +
-        `<td>${{Number(p.current_price).toFixed(4)}}</td>` +
-        `<td>${{Number(p.stop_loss).toFixed(4)}}</td>` +
-        `<td>${{Number(p.take_profit).toFixed(4)}}</td>` +
-        `<td>${{pnl}}</td>` +
+        `<td class='cell-text cell-symbol'>${{p.symbol}}</td>` +
+        `<td class='cell-text'>${{p.market_type}}</td>` +
+        `<td class='cell-text'>${{p.leverage}}x</td>` +
+        `<td class='cell-num'>${{Number(p.quantity).toFixed(6)}}</td>` +
+        `<td class='cell-num'>${{Number(p.entry_price).toFixed(4)}}</td>` +
+        `<td class='cell-num'>${{Number(p.current_price).toFixed(4)}}</td>` +
+        `<td class='cell-num'>${{Number(p.stop_loss).toFixed(4)}}</td>` +
+        `<td class='cell-num'>${{Number(p.take_profit).toFixed(4)}}</td>` +
+        `<td class='cell-num ${{pnlClass}}'>${{pnl}}</td>` +
         `</tr>`;
     }}
 
     function renderWatchlistRow(w) {{
+      const changeClass = Number(w.change_pct_24h) > 0 ? 'value-positive' : Number(w.change_pct_24h) < 0 ? 'value-negative' : 'value-neutral';
       return `<tr>` +
-        `<td>${{w.symbol}}</td>` +
-        `<td>${{w.market_type}}</td>` +
-        `<td>${{w.leverage}}x</td>` +
-        `<td>${{w.data_source}}</td>` +
-        `<td>${{Number(w.price).toFixed(4)}}</td>` +
-        `<td>${{Number(w.change_pct_24h).toFixed(2)}}%</td>` +
-        `<td>${{Number(w.volume_24h).toFixed(0)}}</td>` +
-        `<td>${{w.market_cap_rank}}</td>` +
+        `<td class='cell-text cell-symbol'>${{w.symbol}}</td>` +
+        `<td class='cell-text'>${{w.market_type}}</td>` +
+        `<td class='cell-text'>${{w.leverage}}x</td>` +
+        `<td class='cell-text cell-source'>${{w.data_source}}</td>` +
+        `<td class='cell-num'>${{Number(w.price).toFixed(4)}}</td>` +
+        `<td class='cell-num ${{changeClass}}'>${{Number(w.change_pct_24h).toFixed(2)}}%</td>` +
+        `<td class='cell-num'>${{Number(w.volume_24h).toFixed(0)}}</td>` +
+        `<td class='cell-num'>${{w.market_cap_rank}}</td>` +
         `</tr>`;
     }}
 
