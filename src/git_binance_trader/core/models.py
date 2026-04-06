@@ -64,6 +64,7 @@ class Position(BaseModel):
     entry_price: float
     current_price: float
     market_type: MarketType
+    side: Side = Side.buy
     leverage: int = 1
     stop_loss: float
     take_profit: float

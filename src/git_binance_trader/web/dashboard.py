@@ -42,6 +42,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
         f"<tr>"
         f"<td class='cell-text cell-symbol'>{position.symbol}</td>"
         f"<td class='cell-text'>{position.market_type.value}</td>"
+        f"<td class='cell-text'>{position.side.value}</td>"
         f"<td class='cell-text'>{position.leverage}x</td>"
         f"<td class='cell-num'>{position.quantity:.6f}</td>"
         f"<td class='cell-num'>{position.entry_price:.4f}</td>"
@@ -52,7 +53,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
         f"</tr>"
       )
       for position in state.positions
-    ) or "<tr><td colspan='9' class='table-empty'>当前无持仓</td></tr>"
+    ) or "<tr><td colspan='10' class='table-empty'>当前无持仓</td></tr>"
 
     watchlist_html = "".join(
       (
@@ -134,7 +135,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
     .scroll-box tbody tr.highlight {{ background: rgba(182,95,58,0.12); }}
     .log-box {{ max-height: 540px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 12px; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; line-height: 1.5; }}
     .dashboard-table {{ width: 100%; border-collapse: collapse; border-spacing: 0; font-size: 13px; table-layout: auto; min-width: 100%; }}
-    .positions-table {{ min-width: 940px; }}
+    .positions-table {{ min-width: 1040px; }}
     .watchlist-table {{ min-width: 780px; }}
     .trades-table {{ min-width: 1220px; }}
     .dashboard-table thead th {{ position: sticky; top: 0; z-index: 1; background: #f7f3ed; font-size: 12px; letter-spacing: 0.04em; color: rgba(24,34,44,0.66); text-transform: uppercase; }}
@@ -294,7 +295,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
         <h3 class='panel-title'>持仓</h3>
         <div class='scroll-box'>
           <table class='dashboard-table positions-table'>
-            <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>数量</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>浮盈亏</th></tr></thead>
+            <thead><tr><th>标的</th><th>市场</th><th>方向</th><th>杠杆</th><th>数量</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>浮盈亏</th></tr></thead>
             <tbody id='positions-body'>{positions_html}</tbody>
           </table>
         </div>
@@ -1029,6 +1030,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
       return `<tr>` +
         `<td class='cell-text cell-symbol'>${{p.symbol}}</td>` +
         `<td class='cell-text'>${{p.market_type}}</td>` +
+        `<td class='cell-text'>${{p.side}}</td>` +
         `<td class='cell-text'>${{p.leverage}}x</td>` +
         `<td class='cell-num'>${{Number(p.quantity).toFixed(6)}}</td>` +
         `<td class='cell-num'>${{Number(p.entry_price).toFixed(4)}}</td>` +
@@ -1082,7 +1084,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
 
         document.getElementById('positions-body').innerHTML = state.positions && state.positions.length
           ? state.positions.map(renderPositionRow).join('')
-          : "<tr><td colspan='9'>当前无持仓</td></tr>";
+          : "<tr><td colspan='10'>当前无持仓</td></tr>";
 
         document.getElementById('watchlist-body').innerHTML = state.watchlist && state.watchlist.length
           ? state.watchlist.map(renderWatchlistRow).join('')

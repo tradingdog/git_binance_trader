@@ -106,6 +106,7 @@ class SimulationExchange:
                 entry_price=trade.price,
                 current_price=trade.price,
                 market_type=trade.market_type,
+                side=trade.side,
                 leverage=leverage,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
