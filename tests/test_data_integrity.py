@@ -190,3 +190,39 @@ def test_strategy_keeps_single_market_candidate_per_symbol() -> None:
     scored = strategy._score_candidates(watchlist)
     assert len(scored) == 1
     assert scored[0][0].symbol == "BTCUSDT"
+
+
+def test_strategy_respects_margin_utilization_target_for_perpetual() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.max_exposure_pct = 60.0
+    strategy.params.target_margin_utilization_pct = 12.0
+    strategy.params.position_budget_pct = 30.0
+    strategy.params.entry_score_threshold = 0.1
+    strategy.params.min_quote_volume = 1.0
+    strategy.params.perpetual_leverage = 3
+
+    watchlist = [
+        SymbolSnapshot(
+            symbol="SIRENUSDT",
+            price=2.0,
+            market_cap_rank=10,
+            volume_24h=2_000_000_000,
+            change_pct_24h=9.0,
+            market_type=MarketType.perpetual,
+            leverage=3,
+            data_source="binance-futures",
+        )
+    ]
+
+    trades, _ = strategy.decide(
+        watchlist=watchlist,
+        positions={},
+        cash=10_000.0,
+        equity=10_000.0,
+        recent_trades=[],
+    )
+
+    assert len(trades) == 1
+    # 目标保证金 12%，3x 永续折算后单仓名义预算不应超过 36%。
+    notional = trades[0].quantity * trades[0].price
+    assert notional <= 3600.0 + 1e-6

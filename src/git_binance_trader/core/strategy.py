@@ -12,6 +12,7 @@ from git_binance_trader.core.models import LiquidityType, MarketType, Position, 
 class AdaptiveParams:
     max_positions: int = 4
     max_exposure_pct: float = 25.0
+    target_margin_utilization_pct: float = 18.0
     entry_score_threshold: float = 2.8
     rotation_exit_score: float = 1.6
     position_budget_pct: float = 6.0
@@ -54,10 +55,12 @@ class OpportunityStrategy:
             insights.append(f"轮动退出 {len(exits)} 笔")
 
         exposure = self._current_exposure_pct(positions, equity)
+        margin_util = self._current_margin_utilization_pct(positions, equity)
         room = max(0.0, self.params.max_exposure_pct - exposure)
+        margin_room = max(0.0, self.params.target_margin_utilization_pct - margin_util)
         slots = max(0, self.params.max_positions - len(positions))
 
-        if slots == 0 or room <= 0:
+        if slots == 0 or room <= 0 or margin_room <= 0:
             return trades, "; ".join(insights) if insights else "仓位已满，等待信号"
 
         for snapshot, score in scored:
@@ -74,6 +77,8 @@ class OpportunityStrategy:
                 continue
 
             position_budget_pct = min(self.params.position_budget_pct, room / slots)
+            max_budget_by_margin = self._max_budget_by_margin_room(snapshot.market_type, margin_room)
+            position_budget_pct = min(position_budget_pct, max_budget_by_margin)
             notional = equity * position_budget_pct / 100
             notional = min(notional, cash)
             if notional <= 20:
@@ -99,6 +104,7 @@ class OpportunityStrategy:
             )
             insights.append(f"新开仓 {snapshot.symbol} score={score:.2f} model={snapshot.market_type.value}")
             room -= position_budget_pct
+            margin_room -= self._margin_consumption_pct(snapshot.market_type, position_budget_pct)
             slots -= 1
 
         if not insights:
@@ -267,6 +273,7 @@ class OpportunityStrategy:
         if closed and (win_rate < 0.45 or avg_pnl < 0):
             self.params.max_positions = max(2, self.params.max_positions - 1)
             self.params.max_exposure_pct = max(14.0, self.params.max_exposure_pct - 3.0)
+            self.params.target_margin_utilization_pct = max(10.0, self.params.target_margin_utilization_pct - 2.0)
             self.params.entry_score_threshold = min(4.8, self.params.entry_score_threshold + 0.35)
             self.params.rotation_exit_score = min(2.6, self.params.rotation_exit_score + 0.2)
             self.params.position_budget_pct = max(3.6, self.params.position_budget_pct - 0.5)
@@ -274,6 +281,7 @@ class OpportunityStrategy:
         elif closed and (win_rate > 0.6 and avg_pnl > 0):
             self.params.max_positions = min(5, self.params.max_positions + 1)
             self.params.max_exposure_pct = min(30.0, self.params.max_exposure_pct + 2.0)
+            self.params.target_margin_utilization_pct = min(28.0, self.params.target_margin_utilization_pct + 1.5)
             self.params.entry_score_threshold = max(2.2, self.params.entry_score_threshold - 0.2)
             self.params.rotation_exit_score = max(1.2, self.params.rotation_exit_score - 0.1)
             self.params.position_budget_pct = min(7.0, self.params.position_budget_pct + 0.3)
@@ -375,3 +383,26 @@ class OpportunityStrategy:
             return 0.0
         exposure = sum(position.market_value for position in positions.values())
         return exposure / equity * 100
+
+    @staticmethod
+    def _current_margin_utilization_pct(positions: dict[str, Position], equity: float) -> float:
+        if equity <= 0:
+            return 0.0
+        margin_used = sum(position.margin_used for position in positions.values())
+        return margin_used / equity * 100
+
+    def _max_budget_by_margin_room(self, market_type: MarketType, margin_room_pct: float) -> float:
+        if margin_room_pct <= 0:
+            return 0.0
+        if market_type == MarketType.perpetual:
+            leverage = max(self.params.perpetual_leverage, 1)
+            return margin_room_pct * leverage
+        return margin_room_pct
+
+    def _margin_consumption_pct(self, market_type: MarketType, budget_pct: float) -> float:
+        if budget_pct <= 0:
+            return 0.0
+        if market_type == MarketType.perpetual:
+            leverage = max(self.params.perpetual_leverage, 1)
+            return budget_pct / leverage
+        return budget_pct

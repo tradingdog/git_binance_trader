@@ -699,6 +699,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
     const adaptiveParamLabels = {{
       max_positions: '最大持仓数',
       max_exposure_pct: '最大总仓位暴露比例',
+      target_margin_utilization_pct: '目标保证金利用率',
       entry_score_threshold: '开仓评分阈值',
       rotation_exit_score: '轮动退出阈值',
       position_budget_pct: '单仓预算比例',
@@ -725,8 +726,8 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
         : '<li>暂无热点因子说明</li>';
 
       const params = payload.adaptive_params && typeof payload.adaptive_params === 'object' ? payload.adaptive_params : {{}};
-      const paramKeys = ['max_positions', 'max_exposure_pct', 'entry_score_threshold', 'rotation_exit_score', 'position_budget_pct', 'min_quote_volume'];
-      paramsEl.innerHTML = paramKeys.map((k) => `<b>${{paramLabel(k)}}</b><span>${{toNum(params[k], k === 'min_quote_volume' ? 0 : 4)}}</span>`).join('') || '<b>暂无</b><span>--</span>';
+      const paramKeys = ['max_positions', 'max_exposure_pct', 'target_margin_utilization_pct', 'entry_score_threshold', 'rotation_exit_score', 'position_budget_pct', 'min_quote_volume'];
+      paramsEl.innerHTML = paramKeys.map((k) => `<b>${{paramLabel(k)}}</b><span>${{toNum(params[k], k === 'min_quote_volume' ? 0 : 4)}}${{k === 'target_margin_utilization_pct' ? '%' : ''}}</span>`).join('') || '<b>暂无</b><span>--</span>';
 
       const latest = payload.latest_adaptation && typeof payload.latest_adaptation === 'object' ? payload.latest_adaptation : null;
       const metrics = latest && latest.metrics && typeof latest.metrics === 'object' ? latest.metrics : null;
@@ -766,6 +767,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
                 <div><b>已实现盈亏</b> ${{toNum(metricsRow.realized_sum, 6)}}</div>
                 <div><b>手续费合计</b> ${{toNum(metricsRow.fee_sum, 6)}}</div>
                 <div><b>${{paramLabel('max_exposure_pct')}}</b> ${{toNum(beforeRow.max_exposure_pct, 4)}} -> ${{toNum(afterRow.max_exposure_pct, 4)}}</div>
+                <div><b>${{paramLabel('target_margin_utilization_pct')}}</b> ${{toNum(beforeRow.target_margin_utilization_pct, 4)}}% -> ${{toNum(afterRow.target_margin_utilization_pct, 4)}}%</div>
                 <div><b>${{paramLabel('position_budget_pct')}}</b> ${{toNum(beforeRow.position_budget_pct, 4)}} -> ${{toNum(afterRow.position_budget_pct, 4)}}</div>
                 <div><b>${{paramLabel('entry_score_threshold')}}</b> ${{toNum(beforeRow.entry_score_threshold, 4)}} -> ${{toNum(afterRow.entry_score_threshold, 4)}}</div>
               </div>
