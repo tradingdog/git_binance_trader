@@ -14,6 +14,7 @@ class EquityHistoryStore:
         self.settings = settings
         self.base_dir = Path(settings.persistent_data_dir)
         self.history_path = Path(settings.equity_history_path)
+        self.exchange_state_path = Path(settings.exchange_state_path)
         self.reports_dir = Path(settings.reports_dir)
         self.logs_dir = Path(settings.logs_dir)
 
@@ -39,6 +40,23 @@ class EquityHistoryStore:
             if since is None or point.timestamp >= since:
                 points.append(point)
         return points
+
+    def save_exchange_state(self, payload: dict[str, object]) -> None:
+        self.exchange_state_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.exchange_state_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        temp_path.replace(self.exchange_state_path)
+
+    def load_exchange_state(self) -> dict[str, object] | None:
+        if not self.exchange_state_path.exists():
+            return None
+        try:
+            payload = json.loads(self.exchange_state_path.read_text(encoding="utf-8", errors="ignore"))
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
 
     def ensure_headroom(self) -> None:
         status = self.storage_status()

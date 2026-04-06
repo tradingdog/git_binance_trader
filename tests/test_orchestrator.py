@@ -4,7 +4,7 @@ import pytest
 
 from git_binance_trader.config import Settings
 from git_binance_trader.core.exchange import SimulationExchange
-from git_binance_trader.core.models import MarketType, SymbolSnapshot
+from git_binance_trader.core.models import MarketType, Side, SymbolSnapshot, Trade
 from git_binance_trader.core.risk import RiskManager
 from git_binance_trader.services.history import EquityHistoryStore
 from git_binance_trader.services.orchestrator import TradingOrchestrator
@@ -50,3 +50,47 @@ async def test_run_cycle_generates_state_and_report(tmp_path: Path) -> None:
     assert (tmp_path / "reports" / "strategy-compare-latest.md").exists()
     assert Path(orchestrator.settings.equity_history_path).exists()
     assert state.equity_history
+
+
+def test_restore_exchange_state_keeps_accumulated_fees(tmp_path: Path) -> None:
+    settings = Settings(
+        persistent_data_dir=str(tmp_path / "data"),
+        reports_dir=str(tmp_path / "reports"),
+        logs_dir=str(tmp_path / "logs"),
+        equity_history_file=str(tmp_path / "data" / "history" / "equity-history.jsonl"),
+        exchange_state_file=str(tmp_path / "data" / "history" / "exchange-state.json"),
+    )
+
+    orchestrator = TradingOrchestrator()
+    orchestrator.settings = settings
+    orchestrator.risk_manager = RiskManager(settings)
+    orchestrator.exchange = SimulationExchange(settings, orchestrator.risk_manager)
+    orchestrator.history_store = EquityHistoryStore(settings)
+
+    orchestrator.exchange.submit_trade(
+        Trade(
+            symbol="BTCUSDT",
+            side=Side.buy,
+            quantity=1,
+            price=100,
+            market_type=MarketType.spot,
+            strategy="test",
+        )
+    )
+    orchestrator.exchange.submit_trade(
+        Trade(
+            symbol="BTCUSDT",
+            side=Side.sell,
+            quantity=1,
+            price=110,
+            market_type=MarketType.spot,
+            strategy="test",
+        )
+    )
+    orchestrator.history_store.save_exchange_state(orchestrator.exchange.export_state())
+
+    restored = SimulationExchange(settings, RiskManager(settings))
+    orchestrator.exchange = restored
+    orchestrator._restore_exchange_state()
+
+    assert orchestrator.exchange.account_state()["fees_paid"] == 0.1575

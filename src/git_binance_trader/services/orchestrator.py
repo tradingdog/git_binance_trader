@@ -25,6 +25,7 @@ class TradingOrchestrator:
         self.strategy = OpportunityStrategy()
         self.reporter = DailyReporter()
         self.history_store = EquityHistoryStore(self.settings)
+        self._restore_exchange_state()
         self._lock = asyncio.Lock()
         self._last_state: DashboardState | None = None
         self._last_report = ""
@@ -116,6 +117,7 @@ class TradingOrchestrator:
             self._write_report_snapshot(self._last_report)
             self._write_hourly_report_if_due(self._last_report, now_ts)
             self._write_strategy_comparison_if_needed(state, now_ts)
+            self.history_store.save_exchange_state(self.exchange.export_state())
             self.history_store.ensure_headroom()
             self._log_cycle(state, strategy_insight)
             return state
@@ -156,16 +158,27 @@ class TradingOrchestrator:
 
     async def pause(self) -> dict[str, str]:
         self.exchange.pause()
+        self.history_store.save_exchange_state(self.exchange.export_state())
         return {"status": self.exchange.status.value, "message": self.exchange.last_message}
 
     async def resume(self) -> dict[str, str]:
         self.exchange.resume()
+        self.history_store.save_exchange_state(self.exchange.export_state())
         return {"status": self.exchange.status.value, "message": self.exchange.last_message}
 
     async def emergency_close(self) -> dict[str, str]:
         self.exchange.close_all_positions(reason="用户触发一键全仓平仓")
         self.exchange.pause()
+        self.history_store.save_exchange_state(self.exchange.export_state())
         return {"status": self.exchange.status.value, "message": self.exchange.last_message}
+
+    def _restore_exchange_state(self) -> None:
+        payload = self.history_store.load_exchange_state()
+        if not payload:
+            return
+        restored = self.exchange.import_state(payload)
+        if restored:
+            self.exchange.last_message = "已从持久化快照恢复交易状态"
 
     async def _run_forever(self) -> None:
         while True:

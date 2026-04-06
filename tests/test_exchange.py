@@ -223,3 +223,38 @@ def test_dynamic_take_profit_expands_for_high_score_and_momentum() -> None:
     assert high_position.take_profit_pct > low_position.take_profit_pct
     assert high_position.trailing_stop_gap_pct > 0.9
     assert low_position.take_profit_pct >= 1.2
+
+
+def test_exchange_state_roundtrip_preserves_fee_accumulation() -> None:
+    settings = Settings(initial_balance_usdt=10000.0)
+    exchange = SimulationExchange(settings, RiskManager(settings))
+
+    exchange.submit_trade(
+        Trade(
+            symbol="BTCUSDT",
+            side=Side.buy,
+            quantity=1,
+            price=100,
+            market_type=MarketType.spot,
+            strategy="test",
+        )
+    )
+    exchange.submit_trade(
+        Trade(
+            symbol="BTCUSDT",
+            side=Side.sell,
+            quantity=1,
+            price=110,
+            market_type=MarketType.spot,
+            strategy="test",
+        )
+    )
+
+    snapshot = exchange.export_state()
+
+    restored = SimulationExchange(settings, RiskManager(settings))
+    assert restored.import_state(snapshot)
+
+    metrics = restored.account_state()
+    assert metrics["fees_paid"] == 0.1575
+    assert metrics["cash"] == 10009.8425

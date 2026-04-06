@@ -25,6 +25,69 @@ class SimulationExchange:
         self.last_message = "系统已初始化"
         self._latest_snapshot_map: dict[str, SymbolSnapshot] = {}
 
+    def export_state(self, max_trades: int = 2000) -> dict[str, object]:
+        trade_limit = max(100, min(max_trades, 5000))
+        return {
+            "version": 1,
+            "cash": self.cash,
+            "realized_pnl": self.realized_pnl,
+            "total_fees": self.total_fees,
+            "total_funding_paid": self.total_funding_paid,
+            "peak_equity": self.peak_equity,
+            "start_of_day_equity": self.start_of_day_equity,
+            "status": self.status.value,
+            "last_message": self.last_message,
+            "positions": [position.model_dump(mode="json") for position in self.positions.values()],
+            "trades": [trade.model_dump(mode="json") for trade in self.trades[-trade_limit:]],
+        }
+
+    def import_state(self, payload: dict[str, object]) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        try:
+            cash = float(payload.get("cash", self.settings.initial_balance_usdt))
+            realized_pnl = float(payload.get("realized_pnl", 0.0))
+            total_fees = float(payload.get("total_fees", 0.0))
+            total_funding_paid = float(payload.get("total_funding_paid", 0.0))
+            peak_equity = float(payload.get("peak_equity", self.settings.initial_balance_usdt))
+            start_of_day_equity = float(payload.get("start_of_day_equity", self.settings.initial_balance_usdt))
+        except (TypeError, ValueError):
+            return False
+
+        positions_payload = payload.get("positions", [])
+        trades_payload = payload.get("trades", [])
+        if not isinstance(positions_payload, list) or not isinstance(trades_payload, list):
+            return False
+
+        restored_positions: dict[str, Position] = {}
+        restored_trades: list[Trade] = []
+        try:
+            for item in positions_payload:
+                position = Position.model_validate(item)
+                restored_positions[self._position_key(position.symbol, position.market_type)] = position
+            for item in trades_payload:
+                restored_trades.append(Trade.model_validate(item))
+        except Exception:
+            return False
+
+        status_raw = str(payload.get("status", StrategyState.running.value))
+        try:
+            restored_status = StrategyState(status_raw)
+        except ValueError:
+            restored_status = StrategyState.running
+
+        self.cash = cash
+        self.realized_pnl = realized_pnl
+        self.total_fees = max(total_fees, 0.0)
+        self.total_funding_paid = total_funding_paid
+        self.peak_equity = max(peak_equity, self.settings.initial_balance_usdt)
+        self.start_of_day_equity = max(start_of_day_equity, 0.0)
+        self.status = restored_status
+        self.last_message = str(payload.get("last_message", "已恢复历史状态"))
+        self.positions = restored_positions
+        self.trades = restored_trades[-5000:]
+        return True
+
     def apply_market_prices(self, watchlist: list[SymbolSnapshot], now_ts_ms: int | None = None) -> None:
         snapshot_map = {self._position_key(item.symbol, item.market_type): item for item in watchlist}
         self._latest_snapshot_map = dict(snapshot_map)
