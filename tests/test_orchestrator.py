@@ -6,6 +6,7 @@ from git_binance_trader.config import Settings
 from git_binance_trader.core.exchange import SimulationExchange
 from git_binance_trader.core.models import MarketType, Side, SymbolSnapshot, Trade
 from git_binance_trader.core.risk import RiskManager
+from git_binance_trader.core.strategy import OpportunityStrategy
 from git_binance_trader.services.history import EquityHistoryStore
 from git_binance_trader.services.orchestrator import TradingOrchestrator
 
@@ -22,6 +23,7 @@ async def test_run_cycle_generates_state_and_report(tmp_path: Path) -> None:
     )
     orchestrator.risk_manager = RiskManager(orchestrator.settings)
     orchestrator.exchange = SimulationExchange(orchestrator.settings, orchestrator.risk_manager)
+    orchestrator.strategy = OpportunityStrategy()
     orchestrator.history_store = EquityHistoryStore(orchestrator.settings)
 
     async def fake_top_symbols() -> list[SymbolSnapshot]:
@@ -65,6 +67,7 @@ def test_restore_exchange_state_keeps_accumulated_fees(tmp_path: Path) -> None:
     orchestrator.settings = settings
     orchestrator.risk_manager = RiskManager(settings)
     orchestrator.exchange = SimulationExchange(settings, orchestrator.risk_manager)
+    orchestrator.strategy = OpportunityStrategy()
     orchestrator.history_store = EquityHistoryStore(settings)
 
     orchestrator.exchange.submit_trade(
@@ -110,6 +113,7 @@ def test_list_recent_trades_prefers_persisted_trade_history(tmp_path: Path) -> N
     orchestrator.settings = settings
     orchestrator.risk_manager = RiskManager(settings)
     orchestrator.exchange = SimulationExchange(settings, orchestrator.risk_manager)
+    orchestrator.strategy = OpportunityStrategy()
     orchestrator.history_store = EquityHistoryStore(settings)
 
     first = Trade(
@@ -137,3 +141,37 @@ def test_list_recent_trades_prefers_persisted_trade_history(tmp_path: Path) -> N
     assert len(items) == 2
     assert items[0]["side"] == "sell"
     assert items[1]["side"] == "buy"
+
+
+def test_restore_strategy_state_keeps_adaptive_params(tmp_path: Path) -> None:
+    settings = Settings(
+        persistent_data_dir=str(tmp_path / "data"),
+        reports_dir=str(tmp_path / "reports"),
+        logs_dir=str(tmp_path / "logs"),
+        equity_history_file=str(tmp_path / "data" / "history" / "equity-history.jsonl"),
+        exchange_state_file=str(tmp_path / "data" / "history" / "exchange-state.json"),
+        trade_history_file=str(tmp_path / "data" / "history" / "trade-history.jsonl"),
+        strategy_state_file=str(tmp_path / "data" / "history" / "strategy-state.json"),
+    )
+
+    orchestrator = TradingOrchestrator()
+    orchestrator.settings = settings
+    orchestrator.risk_manager = RiskManager(settings)
+    orchestrator.exchange = SimulationExchange(settings, orchestrator.risk_manager)
+    orchestrator.strategy = OpportunityStrategy()
+    orchestrator.history_store = EquityHistoryStore(settings)
+
+    orchestrator.strategy.params.max_positions = 5
+    orchestrator.strategy.params.entry_score_threshold = 3.33
+    orchestrator.history_store.save_strategy_state(orchestrator.strategy.export_state())
+
+    another = TradingOrchestrator()
+    another.settings = settings
+    another.risk_manager = RiskManager(settings)
+    another.exchange = SimulationExchange(settings, another.risk_manager)
+    another.strategy = OpportunityStrategy()
+    another.history_store = EquityHistoryStore(settings)
+    another._restore_strategy_state()
+
+    assert another.strategy.params.max_positions == 5
+    assert another.strategy.params.entry_score_threshold == 3.33

@@ -111,6 +111,69 @@ class OpportunityStrategy:
             insights.append("未发现满足条件的新机会")
         return trades, "; ".join(insights)
 
+    def export_state(self) -> dict[str, object]:
+        return {
+            "version": 1,
+            "risk_per_trade_pct": self.risk_per_trade_pct,
+            "params": asdict(self.params),
+            "last_adapt_hour": self._last_adapt_hour,
+            "last_adaptation_event": self._last_adaptation_event,
+            "latest_adaptation_snapshot": self._latest_adaptation_snapshot,
+            "first_seen_ts": {k: v.isoformat() for k, v in self._first_seen_ts.items()},
+            "series": {k: list(v) for k, v in self._series.items()},
+        }
+
+    def import_state(self, payload: dict[str, object]) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        try:
+            self.risk_per_trade_pct = float(payload.get("risk_per_trade_pct", self.risk_per_trade_pct))
+        except (TypeError, ValueError):
+            return False
+
+        params_payload = payload.get("params", {})
+        if isinstance(params_payload, dict):
+            try:
+                self.params = AdaptiveParams(**params_payload)
+            except Exception:
+                return False
+
+        self._last_adapt_hour = payload.get("last_adapt_hour") if isinstance(payload.get("last_adapt_hour"), str) else None
+        self._last_adaptation_event = payload.get("last_adaptation_event") if isinstance(payload.get("last_adaptation_event"), dict) else None
+        self._latest_adaptation_snapshot = (
+            payload.get("latest_adaptation_snapshot")
+            if isinstance(payload.get("latest_adaptation_snapshot"), dict)
+            else None
+        )
+
+        self._first_seen_ts.clear()
+        first_seen_payload = payload.get("first_seen_ts", {})
+        if isinstance(first_seen_payload, dict):
+            for key, value in first_seen_payload.items():
+                if not isinstance(key, str) or not isinstance(value, str):
+                    continue
+                try:
+                    self._first_seen_ts[key] = datetime.fromisoformat(value)
+                except ValueError:
+                    continue
+
+        self._series.clear()
+        series_payload = payload.get("series", {})
+        if isinstance(series_payload, dict):
+            for key, rows in series_payload.items():
+                if not isinstance(key, str) or not isinstance(rows, list):
+                    continue
+                target = deque(maxlen=90)
+                for row in rows[-90:]:
+                    if not isinstance(row, (list, tuple)) or len(row) != 3:
+                        continue
+                    try:
+                        target.append((float(row[0]), float(row[1]), float(row[2])))
+                    except (TypeError, ValueError):
+                        continue
+                self._series[key] = target
+        return True
+
     def _score_candidates(self, watchlist: list[SymbolSnapshot], now: datetime | None = None) -> list[tuple[SymbolSnapshot, float]]:
         now_ts = now or datetime.now(timezone.utc)
         candidates = [item for item in watchlist if item.price > 0]

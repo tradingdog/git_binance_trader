@@ -26,6 +26,7 @@ class TradingOrchestrator:
         self.reporter = DailyReporter()
         self.history_store = EquityHistoryStore(self.settings)
         self._restore_exchange_state()
+        self._restore_strategy_state()
         self._sync_trade_history()
         self._lock = asyncio.Lock()
         self._last_state: DashboardState | None = None
@@ -120,6 +121,7 @@ class TradingOrchestrator:
             self._write_strategy_comparison_if_needed(state, now_ts)
             self._sync_trade_history()
             self.history_store.save_exchange_state(self.exchange.export_state())
+            self.history_store.save_strategy_state(self.strategy.export_state())
             self.history_store.ensure_headroom()
             self._log_cycle(state, strategy_insight)
             return state
@@ -161,11 +163,13 @@ class TradingOrchestrator:
     async def pause(self) -> dict[str, str]:
         self.exchange.pause()
         self.history_store.save_exchange_state(self.exchange.export_state())
+        self.history_store.save_strategy_state(self.strategy.export_state())
         return {"status": self.exchange.status.value, "message": self.exchange.last_message}
 
     async def resume(self) -> dict[str, str]:
         self.exchange.resume()
         self.history_store.save_exchange_state(self.exchange.export_state())
+        self.history_store.save_strategy_state(self.strategy.export_state())
         return {"status": self.exchange.status.value, "message": self.exchange.last_message}
 
     async def emergency_close(self) -> dict[str, str]:
@@ -173,6 +177,7 @@ class TradingOrchestrator:
         self.exchange.pause()
         self._sync_trade_history()
         self.history_store.save_exchange_state(self.exchange.export_state())
+        self.history_store.save_strategy_state(self.strategy.export_state())
         return {"status": self.exchange.status.value, "message": self.exchange.last_message}
 
     def _restore_exchange_state(self) -> None:
@@ -182,6 +187,12 @@ class TradingOrchestrator:
         restored = self.exchange.import_state(payload)
         if restored:
             self.exchange.last_message = "已从持久化快照恢复交易状态"
+
+    def _restore_strategy_state(self) -> None:
+        payload = self.history_store.load_strategy_state()
+        if not payload:
+            return
+        self.strategy.import_state(payload)
 
     def _sync_trade_history(self) -> None:
         persisted_count = self.history_store.trade_count()
