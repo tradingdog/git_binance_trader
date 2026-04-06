@@ -14,11 +14,11 @@ async def test_market_data_uses_real_perp_price_without_spot_overwrite() -> None
 
     payloads = iter(
         [
-            [{"symbol": "BTCUSDT", "lastPrice": "83000", "quoteVolume": "1000", "priceChangePercent": "1.2"}],
-            [{"symbol": "BTCUSDT", "lastPrice": "67000", "quoteVolume": "2000", "priceChangePercent": "0.6"}],
-            {"symbols": [{"symbol": "BTCUSDT", "status": "TRADING", "quoteAsset": "USDT", "isSpotTradingAllowed": True}]},
-            {"symbols": [{"symbol": "BTCUSDT", "status": "TRADING", "quoteAsset": "USDT", "contractType": "PERPETUAL"}]},
-            [{"symbol": "BTCUSDT", "lastFundingRate": "0.0001", "nextFundingTime": 1890000000000}],
+            [{"symbol": "SIRENUSDT", "lastPrice": "83000", "quoteVolume": "1000", "priceChangePercent": "1.2"}],
+            [{"symbol": "SIRENUSDT", "lastPrice": "67000", "quoteVolume": "2000", "priceChangePercent": "0.6"}],
+            {"symbols": [{"symbol": "SIRENUSDT", "status": "TRADING", "quoteAsset": "USDT", "isSpotTradingAllowed": True}]},
+            {"symbols": [{"symbol": "SIRENUSDT", "status": "TRADING", "quoteAsset": "USDT", "contractType": "PERPETUAL"}]},
+            [{"symbol": "SIRENUSDT", "lastFundingRate": "0.0001", "nextFundingTime": 1890000000000}],
             [],
             {"code": "000000", "data": []},
             {"code": "000000", "data": {"symbols": []}},
@@ -31,8 +31,8 @@ async def test_market_data_uses_real_perp_price_without_spot_overwrite() -> None
     service._fetch_json_with_retry = fake_fetch_json_with_retry  # type: ignore[method-assign]
     snapshots = await service._fetch_realtime_snapshots()
 
-    spot = next(item for item in snapshots if item.symbol == "BTCUSDT" and item.market_type == MarketType.spot)
-    perp = next(item for item in snapshots if item.symbol == "BTCUSDT" and item.market_type == MarketType.perpetual)
+    spot = next(item for item in snapshots if item.symbol == "SIRENUSDT" and item.market_type == MarketType.spot)
+    perp = next(item for item in snapshots if item.symbol == "SIRENUSDT" and item.market_type == MarketType.perpetual)
     assert spot.price == 83000.0
     assert perp.price == 67000.0
     assert perp.data_source == "binance-futures"
@@ -74,6 +74,57 @@ async def test_market_data_rejects_non_trading_perpetual_symbols() -> None:
     perp_symbols = {item.symbol for item in snapshots if item.market_type == MarketType.perpetual}
     assert "ALPACAUSDT" not in perp_symbols
     assert "SIRENUSDT" in perp_symbols
+
+
+@pytest.mark.anyio
+async def test_market_data_excludes_large_cap_and_stablecoin_spot_perp() -> None:
+    service = BinanceMarketDataService(Settings())
+
+    payloads = iter(
+        [
+            [
+                {"symbol": "BTCUSDT", "lastPrice": "83000", "quoteVolume": "1000", "priceChangePercent": "1.2"},
+                {"symbol": "SIRENUSDT", "lastPrice": "2", "quoteVolume": "2000", "priceChangePercent": "5.2"},
+                {"symbol": "USDCUSDT", "lastPrice": "1", "quoteVolume": "3000", "priceChangePercent": "0.0"},
+            ],
+            [
+                {"symbol": "BTCUSDT", "lastPrice": "82900", "quoteVolume": "1000", "priceChangePercent": "0.8"},
+                {"symbol": "SIRENUSDT", "lastPrice": "2.1", "quoteVolume": "2000", "priceChangePercent": "5.0"},
+                {"symbol": "USDCUSDT", "lastPrice": "1", "quoteVolume": "4000", "priceChangePercent": "0.0"},
+            ],
+            {"symbols": [
+                {"symbol": "BTCUSDT", "status": "TRADING", "quoteAsset": "USDT", "isSpotTradingAllowed": True},
+                {"symbol": "SIRENUSDT", "status": "TRADING", "quoteAsset": "USDT", "isSpotTradingAllowed": True},
+                {"symbol": "USDCUSDT", "status": "TRADING", "quoteAsset": "USDT", "isSpotTradingAllowed": True},
+            ]},
+            {"symbols": [
+                {"symbol": "BTCUSDT", "status": "TRADING", "quoteAsset": "USDT", "contractType": "PERPETUAL"},
+                {"symbol": "SIRENUSDT", "status": "TRADING", "quoteAsset": "USDT", "contractType": "PERPETUAL"},
+                {"symbol": "USDCUSDT", "status": "TRADING", "quoteAsset": "USDT", "contractType": "PERPETUAL"},
+            ]},
+            [
+                {"symbol": "BTCUSDT", "lastFundingRate": "0.0001", "nextFundingTime": 1890000000000},
+                {"symbol": "SIRENUSDT", "lastFundingRate": "0.0002", "nextFundingTime": 1890000000000},
+                {"symbol": "USDCUSDT", "lastFundingRate": "0.0000", "nextFundingTime": 1890000000000},
+            ],
+            [],
+            {"code": "000000", "data": []},
+            {"code": "000000", "data": {"symbols": []}},
+        ]
+    )
+
+    async def fake_fetch_json_with_retry(*_, **__):
+        return next(payloads)
+
+    service._fetch_json_with_retry = fake_fetch_json_with_retry  # type: ignore[method-assign]
+    snapshots = await service._fetch_realtime_snapshots()
+    symbols = {(item.symbol, item.market_type) for item in snapshots}
+    assert ("BTCUSDT", MarketType.spot) not in symbols
+    assert ("BTCUSDT", MarketType.perpetual) not in symbols
+    assert ("USDCUSDT", MarketType.spot) not in symbols
+    assert ("USDCUSDT", MarketType.perpetual) not in symbols
+    assert ("SIRENUSDT", MarketType.spot) in symbols
+    assert ("SIRENUSDT", MarketType.perpetual) in symbols
 
 
 def test_apply_market_prices_closes_position_on_stop_loss() -> None:

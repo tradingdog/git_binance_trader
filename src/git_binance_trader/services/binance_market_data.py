@@ -75,6 +75,8 @@ class BinanceMarketDataService:
                 continue
             if not symbol.endswith("USDT"):
                 continue
+            if self._should_exclude_symbol(symbol, MarketType.spot):
+                continue
             price = float(item.get("lastPrice", 0.0) or 0.0)
             if price <= 0:
                 continue
@@ -86,6 +88,8 @@ class BinanceMarketDataService:
             if symbol not in perp_trading_symbols:
                 continue
             if not symbol.endswith("USDT"):
+                continue
+            if self._should_exclude_symbol(symbol, MarketType.perpetual):
                 continue
             price = float(item.get("lastPrice", 0.0) or 0.0)
             if price <= 0:
@@ -233,4 +237,16 @@ class BinanceMarketDataService:
                 continue
             symbols.add(symbol)
         return symbols
+
+    def _should_exclude_symbol(self, symbol: str, market_type: MarketType) -> bool:
+        if market_type not in {MarketType.spot, MarketType.perpetual}:
+            return False
+        upper_symbol = symbol.upper()
+        if upper_symbol in self.settings.excluded_large_cap_symbol_set:
+            return True
+        if upper_symbol.endswith("USDT"):
+            base_asset = upper_symbol[:-4]
+            if base_asset in self.settings.excluded_stablecoin_base_set:
+                return True
+        return False
 

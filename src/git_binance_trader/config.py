@@ -36,6 +36,39 @@ class Settings(BaseModel):
     binance_api_secret: str = Field(default="")
     fly_api_token: str = Field(default="")
     github_token: str = Field(default="")
+    excluded_large_cap_symbols: tuple[str, ...] = (
+        "BTCUSDT",
+        "ETHUSDT",
+        "BNBUSDT",
+        "XRPUSDT",
+        "SOLUSDT",
+        "ADAUSDT",
+        "DOGEUSDT",
+        "TRXUSDT",
+        "LINKUSDT",
+        "TONUSDT",
+        "AVAXUSDT",
+        "SHIBUSDT",
+        "BCHUSDT",
+        "DOTUSDT",
+        "XLMUSDT",
+        "SUIUSDT",
+        "LTCUSDT",
+        "HBARUSDT",
+        "UNIUSDT",
+        "XMRUSDT",
+    )
+    excluded_stablecoin_bases: tuple[str, ...] = (
+        "USDC",
+        "FDUSD",
+        "TUSD",
+        "USDP",
+        "USDS",
+        "DAI",
+        "BUSD",
+        "USDE",
+        "PYUSD",
+    )
 
     @property
     def simulation_only(self) -> bool:
@@ -44,6 +77,14 @@ class Settings(BaseModel):
     @property
     def equity_history_path(self) -> str:
         return self.equity_history_file or str(Path(self.persistent_data_dir) / "history" / "equity-history.jsonl")
+
+    @property
+    def excluded_large_cap_symbol_set(self) -> set[str]:
+        return {item.upper() for item in self.excluded_large_cap_symbols}
+
+    @property
+    def excluded_stablecoin_base_set(self) -> set[str]:
+        return {item.upper() for item in self.excluded_stablecoin_bases}
 
 
 @lru_cache(maxsize=1)

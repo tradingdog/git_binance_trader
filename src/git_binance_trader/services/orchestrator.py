@@ -127,15 +127,18 @@ class TradingOrchestrator:
 
     async def dashboard(self) -> dict[str, object]:
         state = await self.refresh()
+        strategy_meta = self.strategy.dashboard_meta(
+            watchlist=self._last_watchlist_full[:60],
+            now_ts=self._last_cycle_at,
+        )
+        if isinstance(strategy_meta, dict):
+            strategy_meta["adaptation_history"] = self._load_strategy_comparison_history(limit=12)
         return {
             "state": state,
             "message": self.exchange.last_message,
             "report": self._last_report or self.reporter.build_report(state),
             "last_cycle_at": self._last_cycle_at.isoformat() if self._last_cycle_at else None,
-            "strategy_meta": self.strategy.dashboard_meta(
-                watchlist=self._last_watchlist_full[:60],
-                now_ts=self._last_cycle_at,
-            ),
+            "strategy_meta": strategy_meta,
         }
 
     async def start(self) -> None:
@@ -263,6 +266,22 @@ class TradingOrchestrator:
             return "暂无日志"
         content = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
         return "\n".join(content[-lines:])
+
+    def _load_strategy_comparison_history(self, limit: int = 12) -> list[dict[str, object]]:
+        compare_path = Path(self.settings.reports_dir) / "strategy-compare.jsonl"
+        if not compare_path.exists():
+            return []
+        rows: list[dict[str, object]] = []
+        for raw_line in compare_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-limit:]:
+            if not raw_line.strip():
+                continue
+            try:
+                payload = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                rows.append(payload)
+        return list(reversed(rows))
 
     def _log_cycle(self, state: DashboardState, strategy_insight: str) -> None:
         self.logger.info(

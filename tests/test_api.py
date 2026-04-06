@@ -23,6 +23,10 @@ def test_dashboard_endpoint() -> None:
     assert "margin_used" in payload["state"]["account"]
     assert "equity_history" in payload["state"]
     assert "storage" in payload["state"]
+    assert "strategy_meta" in payload
+    assert "adaptive_params" in payload["strategy_meta"]
+    assert "hot_candidates" in payload["strategy_meta"]
+    assert "adaptation_history" in payload["strategy_meta"]
     if payload["state"]["watchlist"]:
         assert "market_type" in payload["state"]["watchlist"][0]
         assert "leverage" in payload["state"]["watchlist"][0]

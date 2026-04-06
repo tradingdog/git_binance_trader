@@ -164,10 +164,16 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
     .kv b {{ color: rgba(24,34,44,0.72); font-weight: 600; }}
     .kv span {{ font-family: Consolas, "SFMono-Regular", monospace; }}
     .strategy-candidates-table {{ min-width: 1150px; }}
+    .history-list {{ display: grid; gap: 10px; margin-top: 12px; }}
+    .history-item {{ border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,0.72); padding: 12px; }}
+    .history-item-head {{ display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12px; color: rgba(24,34,44,0.7); margin-bottom: 8px; }}
+    .history-item-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; font-size: 12px; }}
+    .history-item-grid b {{ color: rgba(24,34,44,0.72); font-weight: 600; }}
     @media (max-width: 960px) {{
       .shell {{ width: min(100vw - 20px, 100%); padding: 16px 0 24px; }}
       .hero, .tables, .metrics-grid, .chart-summary {{ grid-template-columns: 1fr; }}
       .strategy-grid {{ grid-template-columns: 1fr; }}
+      .history-item-grid {{ grid-template-columns: 1fr; }}
       .span-12, .span-8, .span-7, .span-6, .span-5, .span-4, .span-3 {{ grid-column: 1 / -1; }}
       .report-box pre {{ min-height: 320px; }}
       .panel-tools {{ align-items: flex-start; }}
@@ -276,6 +282,10 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
           </thead>
           <tbody id='strategy-candidates-body'><tr><td colspan='10' class='table-empty'>加载中...</td></tr></tbody>
         </table>
+      </div>
+      <div style='margin-top:12px;'>
+        <h4 style='margin:0 0 10px;'>调参历史记录</h4>
+        <div id='adaptation-history-list' class='history-list'><div class='history-item'>加载中...</div></div>
       </div>
     </section>
 
@@ -686,12 +696,27 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
       return Number.isFinite(n) ? n.toFixed(digits) : '--';
     }}
 
+    const adaptiveParamLabels = {{
+      max_positions: '最大持仓数',
+      max_exposure_pct: '最大总仓位暴露比例',
+      entry_score_threshold: '开仓评分阈值',
+      rotation_exit_score: '轮动退出阈值',
+      position_budget_pct: '单仓预算比例',
+      min_quote_volume: '最低24h成交额',
+      perpetual_leverage: '永续默认杠杆',
+    }};
+
+    function paramLabel(key) {{
+      return adaptiveParamLabels[key] || key;
+    }}
+
     function renderStrategyMeta(meta) {{
       const strategyUpdated = document.getElementById('strategy-updated');
       const defsEl = document.getElementById('factor-def-list');
       const paramsEl = document.getElementById('adaptive-param-list');
       const metricEl = document.getElementById('adaptive-metric-list');
       const candidatesEl = document.getElementById('strategy-candidates-body');
+      const historyEl = document.getElementById('adaptation-history-list');
 
       const payload = meta && typeof meta === 'object' ? meta : {{}};
       const factors = Array.isArray(payload.factors) ? payload.factors : [];
@@ -701,7 +726,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
 
       const params = payload.adaptive_params && typeof payload.adaptive_params === 'object' ? payload.adaptive_params : {{}};
       const paramKeys = ['max_positions', 'max_exposure_pct', 'entry_score_threshold', 'rotation_exit_score', 'position_budget_pct', 'min_quote_volume'];
-      paramsEl.innerHTML = paramKeys.map((k) => `<b>${{k}}</b><span>${{toNum(params[k], 4)}}</span>`).join('') || '<b>暂无</b><span>--</span>';
+      paramsEl.innerHTML = paramKeys.map((k) => `<b>${{paramLabel(k)}}</b><span>${{toNum(params[k], k === 'min_quote_volume' ? 0 : 4)}}</span>`).join('') || '<b>暂无</b><span>--</span>';
 
       const latest = payload.latest_adaptation && typeof payload.latest_adaptation === 'object' ? payload.latest_adaptation : null;
       const metrics = latest && latest.metrics && typeof latest.metrics === 'object' ? latest.metrics : null;
@@ -714,10 +739,39 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
           `<b>平均已实现盈亏</b><span>${{toNum(metrics.avg_realized_pnl, 6)}}</span>`,
           `<b>已实现盈亏合计</b><span>${{toNum(metrics.realized_sum, 6)}}</span>`,
           `<b>手续费合计</b><span>${{toNum(metrics.fee_sum, 6)}}</span>`,
-          `<b>参数变化</b><span>${{before && after ? `${{toNum(before.entry_score_threshold)}} -> ${{toNum(after.entry_score_threshold)}}` : '--'}}</span>`,
+          `<b>开仓评分阈值变化</b><span>${{before && after ? `${{toNum(before.entry_score_threshold)}} -> ${{toNum(after.entry_score_threshold)}}` : '--'}}</span>`,
         ].join('');
       }} else {{
         metricEl.innerHTML = '<b>暂无调参事件</b><span>最近1小时尚未形成新事件</span>';
+      }}
+
+      const historyRows = Array.isArray(payload.adaptation_history) ? payload.adaptation_history : [];
+      if (!historyRows.length) {{
+        historyEl.innerHTML = "<div class='history-item'>暂无调参历史</div>";
+      }} else {{
+        historyEl.innerHTML = historyRows.map((row) => {{
+          const event = row.event || {{}};
+          const metricsRow = event.metrics || {{}};
+          const beforeRow = event.before || {{}};
+          const afterRow = event.after || {{}};
+          return `
+            <div class='history-item'>
+              <div class='history-item-head'>
+                <span>时间：${{event.timestamp ? formatDateTime(event.timestamp) : '--'}}</span>
+                <span>收益率：${{toNum(row.total_return_pct, 4)}}%</span>
+                <span>手续费：${{toNum(row.fees_paid, 4)}}</span>
+              </div>
+              <div class='history-item-grid'>
+                <div><b>胜率</b> ${{toNum(Number(metricsRow.win_rate) * 100, 2)}}%</div>
+                <div><b>已实现盈亏</b> ${{toNum(metricsRow.realized_sum, 6)}}</div>
+                <div><b>手续费合计</b> ${{toNum(metricsRow.fee_sum, 6)}}</div>
+                <div><b>${{paramLabel('max_exposure_pct')}}</b> ${{toNum(beforeRow.max_exposure_pct, 4)}} -> ${{toNum(afterRow.max_exposure_pct, 4)}}</div>
+                <div><b>${{paramLabel('position_budget_pct')}}</b> ${{toNum(beforeRow.position_budget_pct, 4)}} -> ${{toNum(afterRow.position_budget_pct, 4)}}</div>
+                <div><b>${{paramLabel('entry_score_threshold')}}</b> ${{toNum(beforeRow.entry_score_threshold, 4)}} -> ${{toNum(afterRow.entry_score_threshold, 4)}}</div>
+              </div>
+            </div>
+          `;
+        }}).join('');
       }}
 
       const rows = Array.isArray(payload.hot_candidates) ? payload.hot_candidates : [];
