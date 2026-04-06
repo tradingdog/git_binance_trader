@@ -131,7 +131,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
     .chart-summary div {{ padding: 12px; border-radius: 14px; background: rgba(255,255,255,0.7); border: 1px solid var(--line); }}
     .chart-summary strong {{ display: block; font-size: 12px; color: rgba(24,34,44,0.6); }}
     .chart-summary span {{ display: block; margin-top: 8px; font-size: 22px; font-weight: 700; }}
-    .scroll-box {{ max-height: 540px; overflow: auto; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(250,246,241,0.98)); scrollbar-gutter: stable; }}
+    .scroll-box {{ max-height: 540px; overflow-x: auto; overflow-y: auto; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(250,246,241,0.98)); }}
     .scroll-box tbody tr.highlight {{ background: rgba(182,95,58,0.12); }}
     .log-box {{ max-height: 540px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 12px; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; line-height: 1.5; }}
     .dashboard-table {{ width: 100%; border-collapse: collapse; border-spacing: 0; font-size: 13px; table-layout: auto; min-width: 100%; }}
