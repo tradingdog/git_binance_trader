@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from git_binance_trader.config import Settings
-from git_binance_trader.core.models import EquityPoint, StorageStatus
+from git_binance_trader.core.models import EquityPoint, StorageStatus, Trade
 
 
 class EquityHistoryStore:
@@ -15,6 +15,7 @@ class EquityHistoryStore:
         self.base_dir = Path(settings.persistent_data_dir)
         self.history_path = Path(settings.equity_history_path)
         self.exchange_state_path = Path(settings.exchange_state_path)
+        self.trade_history_path = Path(settings.trade_history_path)
         self.reports_dir = Path(settings.reports_dir)
         self.logs_dir = Path(settings.logs_dir)
 
@@ -57,6 +58,31 @@ class EquityHistoryStore:
         if not isinstance(payload, dict):
             return None
         return payload
+
+    def append_trade(self, trade: Trade) -> None:
+        self.trade_history_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.trade_history_path.open("a", encoding="utf-8") as handle:
+            handle.write(trade.model_dump_json())
+            handle.write("\n")
+
+    def load_trades(self, limit: int = 500) -> list[Trade]:
+        if not self.trade_history_path.exists():
+            return []
+        rows = self.trade_history_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        trades: list[Trade] = []
+        for raw_line in rows[-max(1, min(limit, 5000)):]:
+            if not raw_line.strip():
+                continue
+            try:
+                trades.append(Trade.model_validate(json.loads(raw_line)))
+            except Exception:
+                continue
+        return trades
+
+    def trade_count(self) -> int:
+        if not self.trade_history_path.exists():
+            return 0
+        return sum(1 for line in self.trade_history_path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip())
 
     def ensure_headroom(self) -> None:
         status = self.storage_status()

@@ -20,6 +20,7 @@ class Settings(BaseModel):
     logs_dir: str = "data/logs"
     equity_history_file: str = "data/history/equity-history.jsonl"
     exchange_state_file: str = "data/history/exchange-state.json"
+    trade_history_file: str = "data/history/trade-history.jsonl"
     report_interval_minutes: int = 60
     storage_min_free_mb: int = 1500
     storage_retention_days: int = 30
@@ -84,6 +85,10 @@ class Settings(BaseModel):
         return self.exchange_state_file or str(Path(self.persistent_data_dir) / "history" / "exchange-state.json")
 
     @property
+    def trade_history_path(self) -> str:
+        return self.trade_history_file or str(Path(self.persistent_data_dir) / "history" / "trade-history.jsonl")
+
+    @property
     def excluded_large_cap_symbol_set(self) -> set[str]:
         return {item.upper() for item in self.excluded_large_cap_symbols}
 
@@ -106,6 +111,7 @@ def get_settings() -> Settings:
         logs_dir=os.getenv("LOGS_DIR", str(Path(persistent_data_dir) / "logs")),
         equity_history_file=os.getenv("EQUITY_HISTORY_FILE", str(Path(persistent_data_dir) / "history" / "equity-history.jsonl")),
         exchange_state_file=os.getenv("EXCHANGE_STATE_FILE", str(Path(persistent_data_dir) / "history" / "exchange-state.json")),
+        trade_history_file=os.getenv("TRADE_HISTORY_FILE", str(Path(persistent_data_dir) / "history" / "trade-history.jsonl")),
         report_interval_minutes=int(os.getenv("REPORT_INTERVAL_MINUTES", "60")),
         storage_min_free_mb=int(os.getenv("STORAGE_MIN_FREE_MB", "1500")),
         storage_retention_days=int(os.getenv("STORAGE_RETENTION_DAYS", "30")),

@@ -94,3 +94,46 @@ def test_restore_exchange_state_keeps_accumulated_fees(tmp_path: Path) -> None:
     orchestrator._restore_exchange_state()
 
     assert orchestrator.exchange.account_state()["fees_paid"] == 0.1575
+
+
+def test_list_recent_trades_prefers_persisted_trade_history(tmp_path: Path) -> None:
+    settings = Settings(
+        persistent_data_dir=str(tmp_path / "data"),
+        reports_dir=str(tmp_path / "reports"),
+        logs_dir=str(tmp_path / "logs"),
+        equity_history_file=str(tmp_path / "data" / "history" / "equity-history.jsonl"),
+        exchange_state_file=str(tmp_path / "data" / "history" / "exchange-state.json"),
+        trade_history_file=str(tmp_path / "data" / "history" / "trade-history.jsonl"),
+    )
+
+    orchestrator = TradingOrchestrator()
+    orchestrator.settings = settings
+    orchestrator.risk_manager = RiskManager(settings)
+    orchestrator.exchange = SimulationExchange(settings, orchestrator.risk_manager)
+    orchestrator.history_store = EquityHistoryStore(settings)
+
+    first = Trade(
+        symbol="BTCUSDT",
+        side=Side.buy,
+        quantity=1,
+        price=100,
+        market_type=MarketType.spot,
+        strategy="test",
+    )
+    second = Trade(
+        symbol="BTCUSDT",
+        side=Side.sell,
+        quantity=1,
+        price=110,
+        market_type=MarketType.spot,
+        strategy="test",
+    )
+    orchestrator.exchange.trades = [first, second]
+    orchestrator._sync_trade_history()
+    orchestrator.exchange.trades = []
+
+    items = orchestrator.list_recent_trades(limit=10)
+
+    assert len(items) == 2
+    assert items[0]["side"] == "sell"
+    assert items[1]["side"] == "buy"

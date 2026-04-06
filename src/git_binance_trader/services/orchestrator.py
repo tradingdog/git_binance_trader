@@ -26,6 +26,7 @@ class TradingOrchestrator:
         self.reporter = DailyReporter()
         self.history_store = EquityHistoryStore(self.settings)
         self._restore_exchange_state()
+        self._sync_trade_history()
         self._lock = asyncio.Lock()
         self._last_state: DashboardState | None = None
         self._last_report = ""
@@ -117,6 +118,7 @@ class TradingOrchestrator:
             self._write_report_snapshot(self._last_report)
             self._write_hourly_report_if_due(self._last_report, now_ts)
             self._write_strategy_comparison_if_needed(state, now_ts)
+            self._sync_trade_history()
             self.history_store.save_exchange_state(self.exchange.export_state())
             self.history_store.ensure_headroom()
             self._log_cycle(state, strategy_insight)
@@ -169,6 +171,7 @@ class TradingOrchestrator:
     async def emergency_close(self) -> dict[str, str]:
         self.exchange.close_all_positions(reason="用户触发一键全仓平仓")
         self.exchange.pause()
+        self._sync_trade_history()
         self.history_store.save_exchange_state(self.exchange.export_state())
         return {"status": self.exchange.status.value, "message": self.exchange.last_message}
 
@@ -179,6 +182,14 @@ class TradingOrchestrator:
         restored = self.exchange.import_state(payload)
         if restored:
             self.exchange.last_message = "已从持久化快照恢复交易状态"
+
+    def _sync_trade_history(self) -> None:
+        persisted_count = self.history_store.trade_count()
+        current_count = len(self.exchange.trades)
+        if current_count <= persisted_count:
+            return
+        for trade in self.exchange.trades[persisted_count:]:
+            self.history_store.append_trade(trade)
 
     async def _run_forever(self) -> None:
         while True:
@@ -270,7 +281,9 @@ class TradingOrchestrator:
 
     def list_recent_trades(self, limit: int = 500) -> list[dict[str, object]]:
         limit = max(1, min(limit, 5000))
-        return [trade.model_dump(mode="json") for trade in reversed(self.exchange.trades[-limit:])]
+        persisted = self.history_store.load_trades(limit=limit)
+        source = persisted if persisted else self.exchange.trades[-limit:]
+        return [trade.model_dump(mode="json") for trade in reversed(source)]
 
     def tail_runtime_log(self, lines: int = 500) -> str:
         lines = max(1, min(lines, 5000))
