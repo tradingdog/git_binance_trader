@@ -30,6 +30,7 @@ async def dashboard_data() -> dict[str, object]:
         "report": payload["report"],
         "last_cycle_at": payload["last_cycle_at"],
         "report_files": orchestrator.list_report_files()[:24],
+        "strategy_meta": payload.get("strategy_meta", {}),
         "state": state.model_dump(mode="json"),
     }
 
@@ -78,4 +79,6 @@ async def dashboard_page() -> str:
     payload = await orchestrator.dashboard()
     state = payload["state"]
     assert isinstance(state, DashboardState)
-    return render_dashboard(state, str(payload["message"]), str(payload["report"]))
+    strategy_meta = payload.get("strategy_meta", {})
+    assert isinstance(strategy_meta, dict)
+    return render_dashboard(state, str(payload["message"]), str(payload["report"]), strategy_meta)

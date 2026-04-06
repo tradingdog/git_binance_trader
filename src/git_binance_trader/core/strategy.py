@@ -29,6 +29,7 @@ class OpportunityStrategy:
         self._first_seen_ts: dict[str, datetime] = {}
         self._last_adapt_hour: str | None = None
         self._last_adaptation_event: dict[str, object] | None = None
+        self._latest_adaptation_snapshot: dict[str, object] | None = None
 
     def decide(
         self,
@@ -292,11 +293,76 @@ class OpportunityStrategy:
                 "fee_sum": round(fee_sum, 6),
             },
         }
+        self._latest_adaptation_snapshot = self._last_adaptation_event
 
     def get_and_clear_adaptation_event(self) -> dict[str, object] | None:
         event = self._last_adaptation_event
         self._last_adaptation_event = None
         return event
+
+    def dashboard_meta(self, watchlist: list[SymbolSnapshot], now_ts: datetime | None = None) -> dict[str, object]:
+        now = now_ts or datetime.now(timezone.utc)
+        candidates = self._explain_hot_candidates(watchlist, now, limit=12)
+        return {
+            "factors": [
+                {"key": "volume_surge", "label": "放量", "desc": "当前成交额相对历史均值的放大量级"},
+                {"key": "volatility_breakout", "label": "波动挤压突破", "desc": "低波动挤压后向上突破强度"},
+                {"key": "cross_market_strength", "label": "跨市场强弱", "desc": "同币种在现货/永续/Alpha 之间的相对强度"},
+                {"key": "social_heat", "label": "社交热度代理", "desc": "按成交量、排名和 Alpha 热点构造的关注度"},
+                {"key": "new_coin_behavior", "label": "新币行为", "desc": "新上线币种在不同阶段的行为溢价"},
+            ],
+            "adaptive_params": asdict(self.params),
+            "latest_adaptation": self._latest_adaptation_snapshot,
+            "hot_candidates": candidates,
+            "strategy_name": self.name,
+            "generated_at": now.isoformat(),
+        }
+
+    def _explain_hot_candidates(
+        self,
+        watchlist: list[SymbolSnapshot],
+        now: datetime,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        candidates = [item for item in watchlist if item.price > 0]
+        if not candidates:
+            return []
+
+        by_symbol: dict[str, list[SymbolSnapshot]] = defaultdict(list)
+        for item in candidates:
+            by_symbol[item.symbol].append(item)
+
+        best_by_symbol: dict[str, dict[str, object]] = {}
+        for item in candidates:
+            factors = self._compute_factors(item, by_symbol[item.symbol], now)
+            if item.market_type == MarketType.spot:
+                score = self._score_spot(factors)
+            elif item.market_type == MarketType.perpetual:
+                score = self._score_perpetual(factors, item.funding_rate)
+            else:
+                score = self._score_alpha(factors)
+
+            row = {
+                "symbol": item.symbol,
+                "market_type": item.market_type.value,
+                "score": round(score, 4),
+                "change_pct_24h": round(item.change_pct_24h, 4),
+                "volume_24h": round(item.volume_24h, 2),
+                "factors": {
+                    "volume_surge": round(factors["volume_surge"], 4),
+                    "volatility_breakout": round(factors["volatility_breakout"], 4),
+                    "cross_market_strength": round(factors["cross_market_strength"], 4),
+                    "social_heat": round(factors["social_heat"], 4),
+                    "new_coin_behavior": round(factors["new_coin_behavior"], 4),
+                },
+            }
+
+            existing = best_by_symbol.get(item.symbol)
+            if existing is None or float(row["score"]) > float(existing["score"]):
+                best_by_symbol[item.symbol] = row
+
+        rows = sorted(best_by_symbol.values(), key=lambda r: float(r["score"]), reverse=True)
+        return rows[: max(1, limit)]
 
     def _select_leverage(self, market_type: MarketType) -> int:
         if market_type == MarketType.perpetual:

@@ -31,11 +31,13 @@ class TradingOrchestrator:
         self._last_cycle_at: datetime | None = None
         self._last_report_at: datetime | None = None
         self._runner_task: asyncio.Task[None] | None = None
+        self._last_watchlist_full = []
         self.logger = get_strategy_logger(self.settings.logs_dir)
 
     async def run_cycle(self) -> DashboardState:
         async with self._lock:
             watchlist = await self.market_data.get_top_symbols()
+            self._last_watchlist_full = list(watchlist)
             if not watchlist:
                 self.exchange.last_message = "行情API拉取失败，已跳过本轮交易"
             self.exchange.apply_market_prices(watchlist)
@@ -130,6 +132,10 @@ class TradingOrchestrator:
             "message": self.exchange.last_message,
             "report": self._last_report or self.reporter.build_report(state),
             "last_cycle_at": self._last_cycle_at.isoformat() if self._last_cycle_at else None,
+            "strategy_meta": self.strategy.dashboard_meta(
+                watchlist=self._last_watchlist_full[:60],
+                now_ts=self._last_cycle_at,
+            ),
         }
 
     async def start(self) -> None:

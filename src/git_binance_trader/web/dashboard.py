@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from git_binance_trader.core.models import DashboardState
 
 
-def render_dashboard(state: DashboardState, message: str, report: str) -> str:
+def render_dashboard(state: DashboardState, message: str, report: str, strategy_meta: dict[str, object] | None = None) -> str:
     generated_at_iso = state.generated_at.isoformat()
     generated_at_local = state.generated_at.astimezone(ZoneInfo("Asia/Shanghai"))
     history_payload = json.dumps(
@@ -22,6 +22,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         ],
         ensure_ascii=False,
     )
+    strategy_payload = json.dumps(strategy_meta or {}, ensure_ascii=False)
     storage_meta = "未启用持久存储监控"
     if state.storage is not None:
         storage_meta = (
@@ -153,9 +154,20 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     .status-bad {{ color: var(--bad); }}
     .report-box {{ height: 100%; }}
     .report-box pre {{ min-height: 540px; margin: 0; }}
+    .strategy-panel {{ margin-top: 16px; }}
+    .strategy-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 10px; margin-bottom: 12px; }}
+    .strategy-card {{ border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,0.78); padding: 12px; min-height: 120px; }}
+    .strategy-card h4 {{ margin: 0 0 8px; font-size: 14px; }}
+    .strategy-card ul {{ margin: 0; padding-left: 16px; }}
+    .strategy-card li {{ margin: 4px 0; font-size: 12px; color: rgba(24,34,44,0.84); }}
+    .kv {{ display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 12px; }}
+    .kv b {{ color: rgba(24,34,44,0.72); font-weight: 600; }}
+    .kv span {{ font-family: Consolas, "SFMono-Regular", monospace; }}
+    .strategy-candidates-table {{ min-width: 1150px; }}
     @media (max-width: 960px) {{
       .shell {{ width: min(100vw - 20px, 100%); padding: 16px 0 24px; }}
       .hero, .tables, .metrics-grid, .chart-summary {{ grid-template-columns: 1fr; }}
+      .strategy-grid {{ grid-template-columns: 1fr; }}
       .span-12, .span-8, .span-7, .span-6, .span-5, .span-4, .span-3 {{ grid-column: 1 / -1; }}
       .report-box pre {{ min-height: 320px; }}
       .panel-tools {{ align-items: flex-start; }}
@@ -235,6 +247,38 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       </div>
     </section>
 
+    <section class='panel span-12 strategy-panel'>
+      <div class='panel-tools'>
+        <h3 class='panel-title'>策略逻辑看板</h3>
+        <span id='strategy-updated' class='panel-note'>等待策略数据...</span>
+      </div>
+      <div class='strategy-grid'>
+        <div class='strategy-card'>
+          <h4>热点因子定义</h4>
+          <ul id='factor-def-list'><li>加载中...</li></ul>
+        </div>
+        <div class='strategy-card'>
+          <h4>小时级自适应参数（当前）</h4>
+          <div id='adaptive-param-list' class='kv'><b>加载中</b><span>--</span></div>
+        </div>
+        <div class='strategy-card'>
+          <h4>近 1 小时调参依据</h4>
+          <div id='adaptive-metric-list' class='kv'><b>加载中</b><span>--</span></div>
+        </div>
+      </div>
+      <div class='scroll-box'>
+        <table class='dashboard-table strategy-candidates-table'>
+          <thead>
+            <tr>
+              <th>标的</th><th>市场</th><th>总分</th><th>24h涨跌</th><th>24h成交额</th>
+              <th>放量</th><th>波动挤压突破</th><th>跨市场强弱</th><th>社交热度代理</th><th>新币行为</th>
+            </tr>
+          </thead>
+          <tbody id='strategy-candidates-body'><tr><td colspan='10' class='table-empty'>加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class='tables'>
       <div class='panel table-panel span-12'>
         <h3 class='panel-title'>持仓</h3>
@@ -304,6 +348,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
 
   <script>
     const equityHistory = {history_payload};
+    const strategyMetaInitial = {strategy_payload};
     let serverNowMs = new Date('{generated_at_iso}').getTime();
     const displayOffsetMs = 8 * 60 * 60 * 1000;
     const windowConfig = {{
@@ -636,6 +681,75 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
       if (el) el.textContent = text;
     }}
 
+    function toNum(v, digits = 4) {{
+      const n = Number(v);
+      return Number.isFinite(n) ? n.toFixed(digits) : '--';
+    }}
+
+    function renderStrategyMeta(meta) {{
+      const strategyUpdated = document.getElementById('strategy-updated');
+      const defsEl = document.getElementById('factor-def-list');
+      const paramsEl = document.getElementById('adaptive-param-list');
+      const metricEl = document.getElementById('adaptive-metric-list');
+      const candidatesEl = document.getElementById('strategy-candidates-body');
+
+      const payload = meta && typeof meta === 'object' ? meta : {{}};
+      const factors = Array.isArray(payload.factors) ? payload.factors : [];
+      defsEl.innerHTML = factors.length
+        ? factors.map((item) => `<li><b>${{item.label}}</b>：${{item.desc}}</li>`).join('')
+        : '<li>暂无热点因子说明</li>';
+
+      const params = payload.adaptive_params && typeof payload.adaptive_params === 'object' ? payload.adaptive_params : {{}};
+      const paramKeys = ['max_positions', 'max_exposure_pct', 'entry_score_threshold', 'rotation_exit_score', 'position_budget_pct', 'min_quote_volume'];
+      paramsEl.innerHTML = paramKeys.map((k) => `<b>${{k}}</b><span>${{toNum(params[k], 4)}}</span>`).join('') || '<b>暂无</b><span>--</span>';
+
+      const latest = payload.latest_adaptation && typeof payload.latest_adaptation === 'object' ? payload.latest_adaptation : null;
+      const metrics = latest && latest.metrics && typeof latest.metrics === 'object' ? latest.metrics : null;
+      const before = latest && latest.before && typeof latest.before === 'object' ? latest.before : null;
+      const after = latest && latest.after && typeof latest.after === 'object' ? latest.after : null;
+      if (metrics) {{
+        metricEl.innerHTML = [
+          `<b>平仓笔数</b><span>${{toNum(metrics.closed_trades, 0)}}</span>`,
+          `<b>胜率</b><span>${{toNum(Number(metrics.win_rate) * 100, 2)}}%</span>`,
+          `<b>平均已实现盈亏</b><span>${{toNum(metrics.avg_realized_pnl, 6)}}</span>`,
+          `<b>已实现盈亏合计</b><span>${{toNum(metrics.realized_sum, 6)}}</span>`,
+          `<b>手续费合计</b><span>${{toNum(metrics.fee_sum, 6)}}</span>`,
+          `<b>参数变化</b><span>${{before && after ? `${{toNum(before.entry_score_threshold)}} -> ${{toNum(after.entry_score_threshold)}}` : '--'}}</span>`,
+        ].join('');
+      }} else {{
+        metricEl.innerHTML = '<b>暂无调参事件</b><span>最近1小时尚未形成新事件</span>';
+      }}
+
+      const rows = Array.isArray(payload.hot_candidates) ? payload.hot_candidates : [];
+      if (!rows.length) {{
+        candidatesEl.innerHTML = "<tr><td colspan='10' class='table-empty'>暂无可解释候选</td></tr>";
+      }} else {{
+        candidatesEl.innerHTML = rows.map((row) => {{
+          const f = row.factors || {{}};
+          const change = Number(row.change_pct_24h);
+          const changeClass = change > 0 ? 'value-positive' : change < 0 ? 'value-negative' : 'value-neutral';
+          return `
+            <tr>
+              <td class='cell-text cell-symbol'>${{row.symbol || '--'}}</td>
+              <td class='cell-text'>${{row.market_type || '--'}}</td>
+              <td class='cell-num'>${{toNum(row.score, 4)}}</td>
+              <td class='cell-num ${{changeClass}}'>${{toNum(row.change_pct_24h, 2)}}%</td>
+              <td class='cell-num'>${{toNum(row.volume_24h, 0)}}</td>
+              <td class='cell-num'>${{toNum(f.volume_surge, 4)}}</td>
+              <td class='cell-num'>${{toNum(f.volatility_breakout, 4)}}</td>
+              <td class='cell-num'>${{toNum(f.cross_market_strength, 4)}}</td>
+              <td class='cell-num'>${{toNum(f.social_heat, 4)}}</td>
+              <td class='cell-num'>${{toNum(f.new_coin_behavior, 4)}}</td>
+            </tr>
+          `;
+        }}).join('');
+      }}
+
+      strategyUpdated.textContent = payload.generated_at
+        ? `策略数据更新时间：${{formatDateTime(payload.generated_at)}}`
+        : '策略数据更新时间：--';
+    }}
+
     async function loadTrades(limit, options = {{}}) {{
       const silent = Boolean(options.silent);
       const body = document.getElementById('trades-body');
@@ -838,6 +952,7 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
     }});
 
     activateWindow(localStorage.getItem('equity-window') || '1h');
+    renderStrategyMeta(strategyMetaInitial);
     loadTrades(500, {{ silent: false }});
     loadLogs(500, {{ silent: false }});
 
@@ -916,6 +1031,8 @@ def render_dashboard(state: DashboardState, message: str, report: str) -> str:
         document.getElementById('watchlist-body').innerHTML = state.watchlist && state.watchlist.length
           ? state.watchlist.map(renderWatchlistRow).join('')
           : "<tr><td colspan='8'>观察池为空</td></tr>";
+
+        renderStrategyMeta(data.strategy_meta || {{}});
 
         if (state.equity_history && state.equity_history.length) {{
           const prevMaxTs = historyMaxTs;
