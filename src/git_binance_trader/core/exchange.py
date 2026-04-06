@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import log10
+import re
 
 from git_binance_trader.config import Settings
 from git_binance_trader.core.models import LiquidityType, MarketType, Position, Side, StrategyState, SymbolSnapshot, Trade
@@ -21,9 +23,11 @@ class SimulationExchange:
         self.start_of_day_equity = settings.initial_balance_usdt
         self.status = StrategyState.running
         self.last_message = "系统已初始化"
+        self._latest_snapshot_map: dict[str, SymbolSnapshot] = {}
 
     def apply_market_prices(self, watchlist: list[SymbolSnapshot], now_ts_ms: int | None = None) -> None:
         snapshot_map = {self._position_key(item.symbol, item.market_type): item for item in watchlist}
+        self._latest_snapshot_map = dict(snapshot_map)
         now_ms = now_ts_ms if now_ts_ms is not None else int(datetime.now(timezone.utc).timestamp() * 1000)
         to_close: list[Trade] = []
         for position in self.positions.values():
@@ -40,7 +44,7 @@ class SimulationExchange:
                     self._apply_funding_if_due(position, now_ms)
                 if position.current_price > position.highest_price:
                     position.highest_price = position.current_price
-                    trailing_stop = position.highest_price * 0.994
+                    trailing_stop = position.highest_price * (1 - position.trailing_stop_gap_pct / 100)
                     if trailing_stop > position.stop_loss:
                         position.stop_loss = trailing_stop
                 if position.current_price <= position.stop_loss:
@@ -94,6 +98,8 @@ class SimulationExchange:
             self.cash -= margin_required + fee_paid
             trade.fee_paid = fee_paid
             self.total_fees += fee_paid
+            snapshot = self._latest_snapshot_map.get(position_key)
+            stop_loss, take_profit, take_profit_pct, trailing_gap_pct = self._dynamic_exit_levels(trade, snapshot)
             self.positions[position_key] = Position(
                 symbol=trade.symbol,
                 quantity=trade.quantity,
@@ -101,8 +107,10 @@ class SimulationExchange:
                 current_price=trade.price,
                 market_type=trade.market_type,
                 leverage=leverage,
-                stop_loss=trade.price * 0.992,
-                take_profit=trade.price * 1.018,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                take_profit_pct=take_profit_pct,
+                trailing_stop_gap_pct=trailing_gap_pct,
                 highest_price=trade.price,
                 entry_fee=fee_paid,
                 funding_interval_hours=8,
@@ -236,3 +244,66 @@ class SimulationExchange:
             next_funding_time_ms += interval_ms
 
         position.next_funding_time_ms = next_funding_time_ms
+
+    def _dynamic_exit_levels(
+        self,
+        trade: Trade,
+        snapshot: SymbolSnapshot | None,
+    ) -> tuple[float, float, float, float]:
+        base_tp_by_market = {
+            MarketType.spot: 1.8,
+            MarketType.perpetual: 2.4,
+            MarketType.alpha: 3.2,
+        }
+        base_sl_by_market = {
+            MarketType.spot: 0.9,
+            MarketType.perpetual: 1.0,
+            MarketType.alpha: 1.2,
+        }
+        base_trail_by_market = {
+            MarketType.spot: 0.8,
+            MarketType.perpetual: 1.0,
+            MarketType.alpha: 1.15,
+        }
+
+        base_tp = base_tp_by_market.get(trade.market_type, 1.8)
+        base_sl = base_sl_by_market.get(trade.market_type, 0.9)
+        base_trail = base_trail_by_market.get(trade.market_type, 0.8)
+
+        score = self._extract_score_from_note(trade.note)
+        score_bonus = 0.0
+        if score is not None:
+            score_bonus = max(min((score - 3.0) * 0.24, 1.9), -0.8)
+
+        momentum_bonus = 0.0
+        volume_bonus = 0.0
+        funding_penalty = 0.0
+        if snapshot is not None:
+            momentum_bonus = max(min(snapshot.change_pct_24h, 18.0), 0.0) / 18.0 * 1.8
+            volume_bonus = max(min(log10(max(snapshot.volume_24h, 1.0) / 100_000_000.0 + 1.0), 1.2), 0.0)
+            if trade.market_type == MarketType.perpetual:
+                funding_penalty = max(snapshot.funding_rate, 0.0) * 12000
+
+        tp_pct = base_tp + score_bonus + momentum_bonus + volume_bonus - funding_penalty
+        if score is not None and score < 2.2:
+            tp_pct -= 0.5
+        tp_pct = max(min(tp_pct, 8.8 if trade.market_type == MarketType.alpha else 7.2), 1.2)
+
+        sl_pct = max(min(tp_pct * 0.46, 2.2), base_sl)
+        trail_gap_pct = max(min(tp_pct * 0.36, 2.4), base_trail)
+
+        stop_loss = trade.price * (1 - sl_pct / 100)
+        take_profit = trade.price * (1 + tp_pct / 100)
+        return stop_loss, take_profit, round(tp_pct, 4), round(trail_gap_pct, 4)
+
+    @staticmethod
+    def _extract_score_from_note(note: str) -> float | None:
+        if not note:
+            return None
+        match = re.search(r"score=([-+]?\d+(?:\.\d+)?)", note)
+        if not match:
+            return None
+        try:
+            return float(match.group(1))
+        except ValueError:
+            return None

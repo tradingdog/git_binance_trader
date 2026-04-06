@@ -67,6 +67,8 @@ class Position(BaseModel):
     leverage: int = 1
     stop_loss: float
     take_profit: float
+    take_profit_pct: float = 1.8
+    trailing_stop_gap_pct: float = 0.6
     highest_price: float
     entry_fee: float = 0.0
     current_funding_rate: float = 0.0

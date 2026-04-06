@@ -1,6 +1,6 @@
 from git_binance_trader.config import Settings
 from git_binance_trader.core.exchange import SimulationExchange
-from git_binance_trader.core.models import LiquidityType, MarketType, Side, Trade
+from git_binance_trader.core.models import LiquidityType, MarketType, Side, SymbolSnapshot, Trade
 from git_binance_trader.core.risk import RiskManager
 
 
@@ -144,3 +144,82 @@ def test_exchange_alpha_uses_spot_maker_taker_fee_rates() -> None:
     assert metrics["realized_pnl"] == 9.735
     assert metrics["fees_paid"] == 0.265
     assert metrics["cash"] == 10009.735
+
+
+def test_dynamic_take_profit_expands_for_high_score_and_momentum() -> None:
+    settings = Settings(initial_balance_usdt=10000.0)
+    exchange = SimulationExchange(settings, RiskManager(settings))
+
+    exchange.apply_market_prices(
+        [
+            SymbolSnapshot(
+                symbol="SIRENUSDT",
+                price=1.0,
+                market_cap_rank=50,
+                volume_24h=2_500_000_000,
+                change_pct_24h=12.0,
+                market_type=MarketType.perpetual,
+                leverage=3,
+                data_source="binance-futures",
+                funding_rate=0.0001,
+            )
+        ]
+    )
+    exchange.submit_trade(
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.buy,
+            quantity=100,
+            price=1.0,
+            market_type=MarketType.perpetual,
+            leverage=3,
+            strategy="adaptive_opportunity_v2",
+            note="机会开仓 score=9.50 risk=0.35%",
+        )
+    )
+    high_position = exchange.positions["perpetual:SIRENUSDT"]
+
+    exchange.submit_trade(
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.sell,
+            quantity=100,
+            price=1.0,
+            market_type=MarketType.perpetual,
+            strategy="risk_guard",
+            note="测试清仓",
+        )
+    )
+
+    exchange.apply_market_prices(
+        [
+            SymbolSnapshot(
+                symbol="SIRENUSDT",
+                price=1.0,
+                market_cap_rank=50,
+                volume_24h=100_000_000,
+                change_pct_24h=0.5,
+                market_type=MarketType.perpetual,
+                leverage=3,
+                data_source="binance-futures",
+                funding_rate=0.0005,
+            )
+        ]
+    )
+    exchange.submit_trade(
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.buy,
+            quantity=100,
+            price=1.0,
+            market_type=MarketType.perpetual,
+            leverage=3,
+            strategy="adaptive_opportunity_v2",
+            note="机会开仓 score=2.20 risk=0.35%",
+        )
+    )
+    low_position = exchange.positions["perpetual:SIRENUSDT"]
+
+    assert high_position.take_profit_pct > low_position.take_profit_pct
+    assert high_position.trailing_stop_gap_pct > 0.9
+    assert low_position.take_profit_pct >= 1.2
