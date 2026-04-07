@@ -1,0 +1,4 @@
+{"timestamp": "2026-04-07T23:48:55.019431+00:00", "event_type": "human_action", "actor": "human", "message": "全面暂停", "meta": {"status": "paused"}}
+{"timestamp": "2026-04-07T23:48:55.026950+00:00", "event_type": "human_action", "actor": "human", "message": "恢复自动交易", "meta": {"status": "running"}}
+{"timestamp": "2026-04-07T23:48:55.033590+00:00", "event_type": "human_command", "actor": "human", "message": "测试AI记忆", "meta": {"status": "recorded"}}
+{"timestamp": "2026-04-07T23:48:55.037896+00:00", "event_type": "human_action", "actor": "human", "message": "全面停止", "meta": {"status": "halted"}}

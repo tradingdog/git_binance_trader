@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.8.34 - 2026-04-08
+- 按“人类项目与 AI 项目完全隔离”要求，新增独立目录 `ai_trader_project/`，包含独立 `pyproject.toml`、`Dockerfile`、`fly.toml`、`README.md`、`PROJECT_MEMORY.md`、`CHANGELOG.md` 与 `VERSION`。
+- AI 项目独立实现治理后端与深色控制台：支持“全面暂停、恢复自动交易、全面平仓并暂停、全面停止”四类人工最高权限操作，并提供“AI 正在做什么”与人类输入框。
+- AI 项目新增独立记忆落盘：`ai_trader_project/memory/ai-memory.jsonl` 与 `ai_trader_project/memory/human-commands.jsonl`，用于持久化 AI 行为与人类指令。
+- Fly 部署独立化：AI 项目使用独立 app `git-binance-trader-ai` 与独立网址 `https://git-binance-trader-ai.fly.dev/`，可与人类版本并行对照。
+- 安全加固：`.gitignore` 新增 `service_account.json` 与额外虚拟环境忽略规则，避免敏感凭据误提交。
+
 ## v0.8.33 - 2026-04-08
 - 调整自适应参数边界为“硬地板 + 可扩展天花板”：`max_positions` 改为 `[3, 6]`，`target_margin_utilization_pct` 改为 `[30, 55]`，`max_exposure_pct` 改为 `[45, 60]`，`position_budget_pct` 下限维持 `8`。
 - 新增同标的开仓冷却：最近 4 分钟内该币有成交记录时，禁止同市场同标的再次开仓，抑制短周期来回换手。

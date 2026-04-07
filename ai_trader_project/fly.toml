@@ -1,0 +1,24 @@
+app = "git-binance-trader-ai"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PROJECT_NAME = "git_binance_trader_ai"
+  TRADING_MODE = "SIMULATION"
+  INITIAL_BALANCE_USDT = "10000"
+  AI_MEMORY_FILE = "/data/memory/ai-memory.jsonl"
+  HUMAN_COMMAND_FILE = "/data/memory/human-commands.jsonl"
+  CYCLE_INTERVAL_SECONDS = "5"
+
+[[mounts]]
+  source = "trader_ai_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1

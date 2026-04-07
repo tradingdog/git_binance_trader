@@ -4,7 +4,9 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-ai/
 .vscode/
 *.log
 data/
 reports/
+service_account.json
