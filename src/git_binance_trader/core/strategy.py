@@ -22,10 +22,15 @@ class AdaptiveParams:
 
 class OpportunityStrategy:
     name = "adaptive_opportunity_v2"
+    MIN_MAX_POSITIONS = 3
+    MIN_MAX_EXPOSURE_PCT = 40.0
+    MIN_TARGET_MARGIN_UTILIZATION_PCT = 30.0
+    MIN_POSITION_BUDGET_PCT = 8.0
 
     def __init__(self) -> None:
         self.risk_per_trade_pct = 0.35
         self.params = AdaptiveParams()
+        self._enforce_param_floors()
         self._series: dict[str, deque[tuple[float, float, float]]] = defaultdict(lambda: deque(maxlen=90))
         self._first_seen_ts: dict[str, datetime] = {}
         self._last_adapt_hour: str | None = None
@@ -135,6 +140,7 @@ class OpportunityStrategy:
         if isinstance(params_payload, dict):
             try:
                 self.params = AdaptiveParams(**params_payload)
+                self._enforce_param_floors()
             except Exception:
                 return False
 
@@ -334,21 +340,29 @@ class OpportunityStrategy:
         avg_pnl = realized_sum / len(closed) if closed else 0.0
 
         if closed and (win_rate < 0.45 or avg_pnl < 0):
-            self.params.max_positions = max(2, self.params.max_positions - 1)
-            self.params.max_exposure_pct = max(14.0, self.params.max_exposure_pct - 3.0)
-            self.params.target_margin_utilization_pct = max(10.0, self.params.target_margin_utilization_pct - 2.0)
+            self.params.max_positions = max(self.MIN_MAX_POSITIONS, self.params.max_positions - 1)
+            self.params.max_exposure_pct = max(self.MIN_MAX_EXPOSURE_PCT, self.params.max_exposure_pct - 3.0)
+            self.params.target_margin_utilization_pct = max(
+                self.MIN_TARGET_MARGIN_UTILIZATION_PCT,
+                self.params.target_margin_utilization_pct - 2.0,
+            )
             self.params.entry_score_threshold = min(4.8, self.params.entry_score_threshold + 0.35)
             self.params.rotation_exit_score = min(2.6, self.params.rotation_exit_score + 0.2)
-            self.params.position_budget_pct = max(3.6, self.params.position_budget_pct - 0.5)
+            self.params.position_budget_pct = max(
+                self.MIN_POSITION_BUDGET_PCT,
+                self.params.position_budget_pct - 0.5,
+            )
             self.params.min_quote_volume = min(320_000_000.0, self.params.min_quote_volume * 1.08)
         elif closed and (win_rate > 0.6 and avg_pnl > 0):
-            self.params.max_positions = min(5, self.params.max_positions + 1)
-            self.params.max_exposure_pct = min(30.0, self.params.max_exposure_pct + 2.0)
-            self.params.target_margin_utilization_pct = min(28.0, self.params.target_margin_utilization_pct + 1.5)
+            self.params.max_positions = min(8, self.params.max_positions + 1)
+            self.params.max_exposure_pct = min(55.0, self.params.max_exposure_pct + 2.0)
+            self.params.target_margin_utilization_pct = min(45.0, self.params.target_margin_utilization_pct + 1.5)
             self.params.entry_score_threshold = max(2.2, self.params.entry_score_threshold - 0.2)
             self.params.rotation_exit_score = max(1.2, self.params.rotation_exit_score - 0.1)
-            self.params.position_budget_pct = min(7.0, self.params.position_budget_pct + 0.3)
+            self.params.position_budget_pct = min(12.0, self.params.position_budget_pct + 0.3)
             self.params.min_quote_volume = max(80_000_000.0, self.params.min_quote_volume * 0.96)
+
+        self._enforce_param_floors()
 
         self._last_adapt_hour = hour_key
         self._last_adaptation_event = {
@@ -365,6 +379,15 @@ class OpportunityStrategy:
             },
         }
         self._latest_adaptation_snapshot = self._last_adaptation_event
+
+    def _enforce_param_floors(self) -> None:
+        self.params.max_positions = max(self.MIN_MAX_POSITIONS, self.params.max_positions)
+        self.params.max_exposure_pct = max(self.MIN_MAX_EXPOSURE_PCT, self.params.max_exposure_pct)
+        self.params.target_margin_utilization_pct = max(
+            self.MIN_TARGET_MARGIN_UTILIZATION_PCT,
+            self.params.target_margin_utilization_pct,
+        )
+        self.params.position_budget_pct = max(self.MIN_POSITION_BUDGET_PCT, self.params.position_budget_pct)
 
     def get_and_clear_adaptation_event(self) -> dict[str, object] | None:
         event = self._last_adaptation_event

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 import httpx
 
@@ -339,3 +341,58 @@ def test_strategy_respects_margin_utilization_target_for_perpetual() -> None:
     # 目标保证金 12%，3x 永续折算后单仓名义预算不应超过 36%。
     notional = trades[0].quantity * trades[0].price
     assert notional <= 3600.0 + 1e-6
+
+
+def test_strategy_adaptation_enforces_minimum_parameter_floors() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.max_positions = 3
+    strategy.params.max_exposure_pct = 40.0
+    strategy.params.target_margin_utilization_pct = 30.0
+    strategy.params.position_budget_pct = 8.0
+
+    now = datetime.now(timezone.utc)
+    losing_sell = Trade(
+        symbol="SIRENUSDT",
+        side=Side.sell,
+        quantity=1,
+        price=2.0,
+        realized_pnl=-5.0,
+        market_type=MarketType.perpetual,
+        strategy="test",
+        created_at=now,
+    )
+
+    strategy._adapt_hourly([losing_sell], now)
+
+    assert strategy.params.max_positions >= 3
+    assert strategy.params.max_exposure_pct >= 40.0
+    assert strategy.params.target_margin_utilization_pct >= 30.0
+    assert strategy.params.position_budget_pct >= 8.0
+
+
+def test_strategy_import_state_enforces_minimum_parameter_floors() -> None:
+    strategy = OpportunityStrategy()
+    payload = {
+        "risk_per_trade_pct": 0.35,
+        "params": {
+            "max_positions": 2,
+            "max_exposure_pct": 18.0,
+            "target_margin_utilization_pct": 12.0,
+            "entry_score_threshold": 2.8,
+            "rotation_exit_score": 1.6,
+            "position_budget_pct": 4.5,
+            "min_quote_volume": 120_000_000.0,
+            "perpetual_leverage": 3,
+        },
+        "last_adapt_hour": None,
+        "last_adaptation_event": None,
+        "latest_adaptation_snapshot": None,
+        "first_seen_ts": {},
+        "series": {},
+    }
+
+    assert strategy.import_state(payload)
+    assert strategy.params.max_positions == 3
+    assert strategy.params.max_exposure_pct == 40.0
+    assert strategy.params.target_margin_utilization_pct == 30.0
+    assert strategy.params.position_budget_pct == 8.0
