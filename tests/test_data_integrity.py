@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import httpx
@@ -346,7 +346,7 @@ def test_strategy_respects_margin_utilization_target_for_perpetual() -> None:
 def test_strategy_adaptation_enforces_minimum_parameter_floors() -> None:
     strategy = OpportunityStrategy()
     strategy.params.max_positions = 3
-    strategy.params.max_exposure_pct = 40.0
+    strategy.params.max_exposure_pct = 45.0
     strategy.params.target_margin_utilization_pct = 30.0
     strategy.params.position_budget_pct = 8.0
 
@@ -365,7 +365,7 @@ def test_strategy_adaptation_enforces_minimum_parameter_floors() -> None:
     strategy._adapt_hourly([losing_sell], now)
 
     assert strategy.params.max_positions >= 3
-    assert strategy.params.max_exposure_pct >= 40.0
+    assert strategy.params.max_exposure_pct >= 45.0
     assert strategy.params.target_margin_utilization_pct >= 30.0
     assert strategy.params.position_budget_pct >= 8.0
 
@@ -393,6 +393,157 @@ def test_strategy_import_state_enforces_minimum_parameter_floors() -> None:
 
     assert strategy.import_state(payload)
     assert strategy.params.max_positions == 3
-    assert strategy.params.max_exposure_pct == 40.0
+    assert strategy.params.max_exposure_pct == 45.0
     assert strategy.params.target_margin_utilization_pct == 30.0
     assert strategy.params.position_budget_pct == 8.0
+
+
+def test_strategy_import_state_enforces_maximum_parameter_ceilings() -> None:
+    strategy = OpportunityStrategy()
+    payload = {
+        "risk_per_trade_pct": 0.35,
+        "params": {
+            "max_positions": 10,
+            "max_exposure_pct": 90.0,
+            "target_margin_utilization_pct": 70.0,
+            "entry_score_threshold": 2.8,
+            "rotation_exit_score": 1.6,
+            "position_budget_pct": 9.0,
+            "min_quote_volume": 120_000_000.0,
+            "perpetual_leverage": 3,
+        },
+        "last_adapt_hour": None,
+        "last_adaptation_event": None,
+        "latest_adaptation_snapshot": None,
+        "first_seen_ts": {},
+        "series": {},
+    }
+
+    assert strategy.import_state(payload)
+    assert strategy.params.max_positions == 6
+    assert strategy.params.max_exposure_pct == 60.0
+    assert strategy.params.target_margin_utilization_pct == 55.0
+
+
+def test_strategy_blocks_reentry_during_symbol_cooldown() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.entry_score_threshold = 0.5
+    strategy.params.min_quote_volume = 1.0
+    now = datetime.now(timezone.utc)
+    watch = SymbolSnapshot(
+        symbol="SIRENUSDT",
+        price=2.0,
+        market_cap_rank=10,
+        volume_24h=2_000_000_000,
+        change_pct_24h=9.0,
+        market_type=MarketType.perpetual,
+        leverage=3,
+        data_source="binance-futures",
+    )
+
+    strategy._score_candidates = lambda watchlist, now=None: [(watch, 2.0)]  # type: ignore[method-assign]
+    recent = [
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.sell,
+            quantity=1,
+            price=2.1,
+            market_type=MarketType.perpetual,
+            strategy="risk_guard",
+            note="触发止损/跟踪止盈",
+            created_at=now,
+        )
+    ]
+
+    trades, _ = strategy.decide(
+        watchlist=[watch],
+        positions={},
+        cash=10_000.0,
+        equity=10_000.0,
+        recent_trades=recent,
+        now_ts=now,
+    )
+
+    assert trades == []
+
+
+def test_strategy_deweights_symbol_after_consecutive_stop_losses() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.entry_score_threshold = 1.0
+    strategy.params.min_quote_volume = 1.0
+    now = datetime.now(timezone.utc)
+    watch = SymbolSnapshot(
+        symbol="SIRENUSDT",
+        price=2.0,
+        market_cap_rank=10,
+        volume_24h=2_000_000_000,
+        change_pct_24h=9.0,
+        market_type=MarketType.perpetual,
+        leverage=3,
+        data_source="binance-futures",
+    )
+
+    strategy._score_candidates = lambda watchlist, now=None: [(watch, 1.5)]  # type: ignore[method-assign]
+    recent = [
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.sell,
+            quantity=1,
+            price=2.1,
+            market_type=MarketType.perpetual,
+            strategy="risk_guard",
+            note="触发止损/跟踪止盈",
+            created_at=now,
+        ),
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.sell,
+            quantity=1,
+            price=2.0,
+            market_type=MarketType.perpetual,
+            strategy="risk_guard",
+            note="触发止损/跟踪止盈",
+            created_at=now,
+        ),
+    ]
+
+    trades, _ = strategy.decide(
+        watchlist=[watch],
+        positions={},
+        cash=10_000.0,
+        equity=10_000.0,
+        recent_trades=recent,
+        now_ts=now + timedelta(minutes=6),
+    )
+
+    assert trades == []
+
+
+def test_strategy_raises_quality_threshold_for_marginal_signals() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.entry_score_threshold = 1.0
+    strategy.params.min_quote_volume = 1.0
+    now = datetime.now(timezone.utc)
+    watch = SymbolSnapshot(
+        symbol="SIRENUSDT",
+        price=2.0,
+        market_cap_rank=10,
+        volume_24h=2_000_000_000,
+        change_pct_24h=9.0,
+        market_type=MarketType.perpetual,
+        leverage=3,
+        data_source="binance-futures",
+    )
+
+    strategy._score_candidates = lambda watchlist, now=None: [(watch, 1.1)]  # type: ignore[method-assign]
+
+    trades, _ = strategy.decide(
+        watchlist=[watch],
+        positions={},
+        cash=10_000.0,
+        equity=10_000.0,
+        recent_trades=[],
+        now_ts=now,
+    )
+
+    assert trades == []

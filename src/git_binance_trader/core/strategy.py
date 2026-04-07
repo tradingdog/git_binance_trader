@@ -23,9 +23,16 @@ class AdaptiveParams:
 class OpportunityStrategy:
     name = "adaptive_opportunity_v2"
     MIN_MAX_POSITIONS = 3
-    MIN_MAX_EXPOSURE_PCT = 40.0
+    MAX_MAX_POSITIONS = 6
+    MIN_MAX_EXPOSURE_PCT = 45.0
+    MAX_MAX_EXPOSURE_PCT = 60.0
     MIN_TARGET_MARGIN_UTILIZATION_PCT = 30.0
+    MAX_TARGET_MARGIN_UTILIZATION_PCT = 55.0
     MIN_POSITION_BUDGET_PCT = 8.0
+    REENTRY_COOLDOWN_SECONDS = 4 * 60
+    LOSS_STREAK_LOOKBACK_SECONDS = 90 * 60
+    LOSS_STREAK_PENALTY_STEP = 0.6
+    QUALITY_THRESHOLD_UPLIFT = 0.15
 
     def __init__(self) -> None:
         self.risk_per_trade_pct = 0.35
@@ -69,6 +76,7 @@ class OpportunityStrategy:
             return trades, "; ".join(insights) if insights else "仓位已满，等待信号"
 
         for snapshot, score in scored:
+            symbol_key = f"{snapshot.market_type.value}:{snapshot.symbol}"
             if any(
                 position.symbol == snapshot.symbol and position.market_type == snapshot.market_type
                 for position in positions.values()
@@ -76,7 +84,11 @@ class OpportunityStrategy:
                 continue
             if slots <= 0 or room <= 0:
                 break
-            if score < self.params.entry_score_threshold:
+            if self._in_reentry_cooldown(symbol_key, recent_trades, now):
+                continue
+
+            effective_score = score - self._loss_streak_penalty(symbol_key, recent_trades, now)
+            if effective_score < self.params.entry_score_threshold + self.QUALITY_THRESHOLD_UPLIFT:
                 continue
             if snapshot.volume_24h < self.params.min_quote_volume:
                 continue
@@ -93,7 +105,7 @@ class OpportunityStrategy:
             if quantity <= 0:
                 continue
 
-            note = f"机会开仓 score={score:.2f} risk={self.risk_per_trade_pct:.2f}%"
+            note = f"机会开仓 score={effective_score:.2f} risk={self.risk_per_trade_pct:.2f}%"
             trades.append(
                 Trade(
                     symbol=snapshot.symbol,
@@ -107,7 +119,7 @@ class OpportunityStrategy:
                     note=note,
                 )
             )
-            insights.append(f"新开仓 {snapshot.symbol} score={score:.2f} model={snapshot.market_type.value}")
+            insights.append(f"新开仓 {snapshot.symbol} score={effective_score:.2f} model={snapshot.market_type.value}")
             room -= position_budget_pct
             margin_room -= self._margin_consumption_pct(snapshot.market_type, position_budget_pct)
             slots -= 1
@@ -354,9 +366,12 @@ class OpportunityStrategy:
             )
             self.params.min_quote_volume = min(320_000_000.0, self.params.min_quote_volume * 1.08)
         elif closed and (win_rate > 0.6 and avg_pnl > 0):
-            self.params.max_positions = min(8, self.params.max_positions + 1)
-            self.params.max_exposure_pct = min(55.0, self.params.max_exposure_pct + 2.0)
-            self.params.target_margin_utilization_pct = min(45.0, self.params.target_margin_utilization_pct + 1.5)
+            self.params.max_positions = min(self.MAX_MAX_POSITIONS, self.params.max_positions + 1)
+            self.params.max_exposure_pct = min(self.MAX_MAX_EXPOSURE_PCT, self.params.max_exposure_pct + 2.0)
+            self.params.target_margin_utilization_pct = min(
+                self.MAX_TARGET_MARGIN_UTILIZATION_PCT,
+                self.params.target_margin_utilization_pct + 1.5,
+            )
             self.params.entry_score_threshold = max(2.2, self.params.entry_score_threshold - 0.2)
             self.params.rotation_exit_score = max(1.2, self.params.rotation_exit_score - 0.1)
             self.params.position_budget_pct = min(12.0, self.params.position_budget_pct + 0.3)
@@ -388,6 +403,40 @@ class OpportunityStrategy:
             self.params.target_margin_utilization_pct,
         )
         self.params.position_budget_pct = max(self.MIN_POSITION_BUDGET_PCT, self.params.position_budget_pct)
+        self.params.max_positions = min(self.MAX_MAX_POSITIONS, self.params.max_positions)
+        self.params.max_exposure_pct = min(self.MAX_MAX_EXPOSURE_PCT, self.params.max_exposure_pct)
+        self.params.target_margin_utilization_pct = min(
+            self.MAX_TARGET_MARGIN_UTILIZATION_PCT,
+            self.params.target_margin_utilization_pct,
+        )
+
+    def _in_reentry_cooldown(self, symbol_key: str, recent_trades: list[Trade], now: datetime) -> bool:
+        cutoff = now.timestamp() - self.REENTRY_COOLDOWN_SECONDS
+        for trade in reversed(recent_trades):
+            if trade.created_at.timestamp() < cutoff:
+                break
+            if f"{trade.market_type.value}:{trade.symbol}" == symbol_key:
+                return True
+        return False
+
+    def _loss_streak_penalty(self, symbol_key: str, recent_trades: list[Trade], now: datetime) -> float:
+        cutoff = now.timestamp() - self.LOSS_STREAK_LOOKBACK_SECONDS
+        streak = 0
+        for trade in reversed(recent_trades):
+            if trade.created_at.timestamp() < cutoff:
+                break
+            if f"{trade.market_type.value}:{trade.symbol}" != symbol_key:
+                continue
+            if trade.side != Side.sell:
+                continue
+            note = trade.note or ""
+            if "止损" in note:
+                streak += 1
+                continue
+            break
+        if streak < 2:
+            return 0.0
+        return min(1.8, streak * self.LOSS_STREAK_PENALTY_STEP)
 
     def get_and_clear_adaptation_event(self) -> dict[str, object] | None:
         event = self._last_adaptation_event
