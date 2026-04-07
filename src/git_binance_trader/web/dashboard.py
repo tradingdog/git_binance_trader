@@ -155,6 +155,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
     .status-bad {{ color: var(--bad); }}
     .report-box {{ height: 100%; }}
     .report-box pre {{ min-height: 540px; margin: 0; }}
+    .hero-report pre {{ min-height: 220px; max-height: 300px; }}
     .strategy-panel {{ margin-top: 16px; }}
     .strategy-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 10px; margin-bottom: 12px; }}
     .strategy-card {{ border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,0.78); padding: 12px; min-height: 120px; }}
@@ -185,7 +186,7 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
 <body>
   <div class='shell'>
     <section class='hero'>
-      <div class='panel span-8'>
+      <div class='panel span-4'>
         <p style='margin:0;color:rgba(24,34,44,0.58)'>模拟资金 / 风控优先 / 禁止实盘</p>
         <h1 class='headline'>git_binance_trader 控制台</h1>
         <p class='subline'>系统仅运行在模拟盘环境，默认执行现货、永续与 Alpha（币安专门交易分类/新上市机会）统一风控框架。当前前端为观察者模式，仅展示策略结果。</p>
@@ -200,6 +201,10 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
         <p id='risk-status' class='{{"status-bad" if state.account.risk_status.breached else "status-good"}}'>{state.account.risk_status.message}</p>
         <p>最近事件：<span id='cycle-message'>{message}</span></p>
         <p class='meta' id='last-updated-label' style='margin:4px 0 0'>正在运行</p>
+      </div>
+      <div class='panel report-box hero-report span-4'>
+        <h3 class='panel-title'>每小时报告（最新快照）</h3>
+        <pre>{report}</pre>
       </div>
     </section>
     <section class='metrics-grid'>
@@ -254,6 +259,49 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
       </div>
     </section>
 
+    <section class='tables'>
+      <div class='panel table-panel span-12'>
+        <h3 class='panel-title'>持仓</h3>
+        <div class='scroll-box'>
+          <table class='dashboard-table positions-table'>
+            <thead><tr><th>标的</th><th>市场</th><th>方向</th><th>杠杆</th><th>数量</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>浮盈亏</th></tr></thead>
+            <tbody id='positions-body'>{positions_html}</tbody>
+          </table>
+        </div>
+      </div>
+      <div class='panel trade-panel span-12'>
+        <div class='panel-tools'>
+          <h3 class='panel-title'>成交明细</h3>
+          <div class='controls'>
+            <label>条数
+              <select id='trades-limit' class='select'>
+                <option value='500' selected>500</option>
+                <option value='1000'>1000</option>
+                <option value='2000'>2000</option>
+                <option value='5000'>5000</option>
+              </select>
+            </label>
+          </div>
+          <span id='trades-status' class='panel-note'>等待刷新</span>
+        </div>
+        <div class='scroll-box'>
+          <table class='dashboard-table trades-table'>
+            <thead><tr><th>时间</th><th>标的</th><th>市场</th><th>杠杆</th><th>方向</th><th>下单类型</th><th>数量</th><th>价格</th><th>手续费</th><th>已实现</th><th>备注</th></tr></thead>
+            <tbody id='trades-body'><tr><td colspan='11'>加载中...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class='panel table-panel span-12'>
+        <h3 class='panel-title'>观察池（前 10）</h3>
+        <div class='scroll-box'>
+          <table class='dashboard-table watchlist-table'>
+            <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>来源</th><th>价格</th><th>24h</th><th>24h成交额</th><th>排名</th></tr></thead>
+            <tbody id='watchlist-body'>{watchlist_html}</tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section class='panel span-12 strategy-panel'>
       <div class='panel-tools'>
         <h3 class='panel-title'>策略逻辑看板</h3>
@@ -284,57 +332,13 @@ def render_dashboard(state: DashboardState, message: str, report: str, strategy_
           <tbody id='strategy-candidates-body'><tr><td colspan='10' class='table-empty'>加载中...</td></tr></tbody>
         </table>
       </div>
-      <div style='margin-top:12px;'>
-        <h4 style='margin:0 0 10px;'>调参历史记录</h4>
-        <div id='adaptation-history-list' class='history-list'><div class='history-item'>加载中...</div></div>
-      </div>
     </section>
 
-    <section class='tables'>
-      <div class='panel table-panel span-12'>
-        <h3 class='panel-title'>持仓</h3>
-        <div class='scroll-box'>
-          <table class='dashboard-table positions-table'>
-            <thead><tr><th>标的</th><th>市场</th><th>方向</th><th>杠杆</th><th>数量</th><th>开仓价</th><th>现价</th><th>止损</th><th>止盈</th><th>浮盈亏</th></tr></thead>
-            <tbody id='positions-body'>{positions_html}</tbody>
-          </table>
-        </div>
+    <section class='panel span-12' style='margin-top:16px;'>
+      <div class='panel-tools'>
+        <h3 class='panel-title'>调参历史记录</h3>
       </div>
-      <div class='panel table-panel span-12'>
-        <h3 class='panel-title'>观察池（前 10）</h3>
-        <div class='scroll-box'>
-          <table class='dashboard-table watchlist-table'>
-            <thead><tr><th>标的</th><th>市场</th><th>杠杆</th><th>来源</th><th>价格</th><th>24h</th><th>24h成交额</th><th>排名</th></tr></thead>
-            <tbody id='watchlist-body'>{watchlist_html}</tbody>
-          </table>
-        </div>
-      </div>
-      <div class='panel trade-panel span-12'>
-        <div class='panel-tools'>
-          <h3 class='panel-title'>成交明细</h3>
-          <div class='controls'>
-            <label>条数
-              <select id='trades-limit' class='select'>
-                <option value='500' selected>500</option>
-                <option value='1000'>1000</option>
-                <option value='2000'>2000</option>
-                <option value='5000'>5000</option>
-              </select>
-            </label>
-          </div>
-          <span id='trades-status' class='panel-note'>等待刷新</span>
-        </div>
-        <div class='scroll-box'>
-          <table class='dashboard-table trades-table'>
-            <thead><tr><th>时间</th><th>标的</th><th>市场</th><th>杠杆</th><th>方向</th><th>下单类型</th><th>数量</th><th>价格</th><th>手续费</th><th>已实现</th><th>备注</th></tr></thead>
-            <tbody id='trades-body'><tr><td colspan='11'>加载中...</td></tr></tbody>
-          </table>
-        </div>
-      </div>
-      <div class='panel report-box span-12'>
-        <h3 class='panel-title'>每小时报告（最新快照）</h3>
-        <pre>{report}</pre>
-      </div>
+      <div id='adaptation-history-list' class='history-list'><div class='history-item'>加载中...</div></div>
     </section>
 
     <section class='panel span-12' style='margin-top:16px;'>

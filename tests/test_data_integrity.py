@@ -161,7 +161,7 @@ async def test_build_alpha_snapshots_uses_searchable_symbol_and_real_market_filt
 
     responses = iter(
         [
-            {"code": "000000", "data": {"lastPrice": "48.00", "quoteVolume": "6667807.36", "count": 11361, "priceChangePercent": "0.01"}},
+            {"code": "000000", "data": {"lastPrice": "48.00", "quoteVolume": "6667807.36", "count": 11361, "priceChangePercent": "12.01"}},
             {"code": "000000", "data": [["1","0","0","0","0","0","0","5226083.22","8504"], ["1","0","0","0","0","0","0","6603002.73","10978"], ["1","0","0","0","0","0","0","1036354.69","2132"]]},
         ]
     )
@@ -197,6 +197,47 @@ def test_alpha_market_activity_filter_rejects_low_liquidity_token() -> None:
     }
 
     assert not service._passes_alpha_market_activity_filter(ticker_payload, klines_payload)
+
+
+def test_alpha_snapshot_filter_rejects_neutral_change_range() -> None:
+    service = BinanceMarketDataService(Settings())
+    row = SymbolSnapshot(
+        symbol="KOGE",
+        price=48.0,
+        market_cap_rank=1,
+        volume_24h=6_000_000,
+        change_pct_24h=0.0,
+        market_type=MarketType.alpha,
+        leverage=1,
+        data_source="binance-alpha",
+    )
+
+    ticker_payload = {
+        "code": "000000",
+        "data": {"lastPrice": "48.00", "quoteVolume": "6667807.36", "count": 11361, "priceChangePercent": "2.50"},
+    }
+    klines_payload = {
+        "code": "000000",
+        "data": [["1", "0", "0", "0", "0", "0", "0", "5226083.22", "8504"]] * 30,
+    }
+
+    assert service._passes_alpha_market_activity_filter(ticker_payload, klines_payload)
+
+    import asyncio
+    import httpx
+
+    async def _run() -> list[SymbolSnapshot]:
+        responses = iter([ticker_payload, klines_payload])
+
+        async def fake_fetch_json_with_retry(*_, **__):
+            return next(responses)
+
+        service._fetch_json_with_retry = fake_fetch_json_with_retry  # type: ignore[method-assign]
+        async with httpx.AsyncClient() as client:
+            return await service._filter_alpha_snapshots_by_market_activity(client, [row], {"KOGE": "ALPHA_22USDT"})
+
+    filtered = asyncio.run(_run())
+    assert filtered == []
 
 
 def test_apply_market_prices_closes_position_on_stop_loss() -> None:
