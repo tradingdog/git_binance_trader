@@ -74,6 +74,11 @@ async def emergency_close() -> dict[str, str]:
     return await orchestrator.emergency_close()
 
 
+@router.post("/api/actions/close-alpha")
+async def close_alpha_positions() -> dict[str, object]:
+    return await orchestrator.close_alpha_positions()
+
+
 @router.get("/", response_class=HTMLResponse)
 async def dashboard_page() -> str:
     payload = await orchestrator.dashboard()

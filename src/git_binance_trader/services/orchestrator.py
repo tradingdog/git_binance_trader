@@ -181,6 +181,13 @@ class TradingOrchestrator:
         self.history_store.save_strategy_state(self.strategy.export_state())
         return {"status": self.exchange.status.value, "message": self.exchange.last_message}
 
+    async def close_alpha_positions(self) -> dict[str, object]:
+        closed = self.exchange.close_alpha_positions(reason="用户触发 Alpha 专项平仓")
+        self._sync_trade_history()
+        self.history_store.save_exchange_state(self.exchange.export_state())
+        self.history_store.save_strategy_state(self.strategy.export_state())
+        return {"status": self.exchange.status.value, "message": self.exchange.last_message, "closed_count": closed}
+
     def _restore_exchange_state(self) -> None:
         payload = self.history_store.load_exchange_state()
         if not payload:

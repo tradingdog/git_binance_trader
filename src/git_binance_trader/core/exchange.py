@@ -296,6 +296,32 @@ class SimulationExchange:
             )
         self.last_message = f"已执行紧急平仓: {reason}"
 
+    def close_alpha_positions(self, reason: str) -> int:
+        """平仓所有 Alpha 市场类型持仓，不影响永续及现货仓位，返回已平仓数量。"""
+        closed = 0
+        for position_key in list(self.positions.keys()):
+            position = self.positions[position_key]
+            if position.market_type != MarketType.alpha:
+                continue
+            self.submit_trade(
+                Trade(
+                    symbol=position.symbol,
+                    side=Side.sell,
+                    quantity=position.quantity,
+                    price=position.current_price,
+                    realized_pnl=position.unrealized_pnl,
+                    market_type=position.market_type,
+                    strategy="risk_guard",
+                    note=reason,
+                )
+            )
+            closed += 1
+        if closed:
+            self.last_message = f"已平仓 {closed} 笔 Alpha 持仓: {reason}"
+        else:
+            self.last_message = "当前无 Alpha 持仓需要平仓"
+        return closed
+
     @staticmethod
     def _position_key(symbol: str, market_type) -> str:
         return f"{market_type.value}:{symbol}"

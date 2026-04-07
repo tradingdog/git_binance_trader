@@ -263,6 +263,9 @@ class BinanceMarketDataService:
             row.price = float(ticker_data.get("lastPrice", row.price) or row.price)
             row.volume_24h = float(ticker_data.get("quoteVolume", row.volume_24h) or row.volume_24h)
             row.change_pct_24h = float(ticker_data.get("priceChangePercent", row.change_pct_24h) or row.change_pct_24h)
+            # Alpha 准入：只接受 24h 涨跌幅 >= +10% 或 <= -10%，忽略震荡区间标的。
+            if abs(row.change_pct_24h) < 10.0:
+                continue
             filtered.append(row)
         return filtered
 
