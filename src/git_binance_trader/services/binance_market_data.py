@@ -12,6 +12,8 @@ from git_binance_trader.core.models import MarketType, SymbolSnapshot
 class BinanceMarketDataService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._latest_alpha_symbol_aliases: dict[str, str] = {}
+        self._latest_alpha_actual_symbols: dict[str, str] = {}
 
     async def get_top_symbols(self) -> list[SymbolSnapshot]:
         snapshots = await self._fetch_realtime_snapshots()
@@ -43,6 +45,8 @@ class BinanceMarketDataService:
                 "https://www.binance.com/bapi/defi/v1/public/alpha-trade/get-exchange-info",
                 retries=1,
             )
+
+            alpha_snapshots = await self._build_alpha_snapshots(client, alpha_token_payload, alpha_info_payload)
 
         if not isinstance(spot_payload, list) and not isinstance(perp_payload, list):
             return []
@@ -111,8 +115,6 @@ class BinanceMarketDataService:
             interval_hours = int(item.get("fundingIntervalHours", 8) or 8)
             funding_interval_map[symbol] = max(interval_hours, 1)
 
-        alpha_snapshots = self._build_alpha_snapshots(alpha_token_payload, alpha_info_payload)
-
         snapshots: list[SymbolSnapshot] = []
         for symbol, item in spot_map.items():
             snapshots.append(
@@ -156,6 +158,12 @@ class BinanceMarketDataService:
             row.market_cap_rank = idx
         return ordered
 
+    def alpha_symbol_aliases(self) -> dict[str, str]:
+        return dict(self._latest_alpha_symbol_aliases)
+
+    def alpha_actual_symbols(self) -> dict[str, str]:
+        return dict(self._latest_alpha_actual_symbols)
+
     async def _fetch_json_with_retry(self, client: httpx.AsyncClient, url: str, retries: int) -> Any:
         for attempt in range(retries + 1):
             try:
@@ -167,8 +175,15 @@ class BinanceMarketDataService:
                     return None
                 await asyncio.sleep(0.4 * (attempt + 1))
 
-    def _build_alpha_snapshots(self, alpha_token_payload: dict, alpha_info_payload: dict) -> list[SymbolSnapshot]:
+    async def _build_alpha_snapshots(
+        self,
+        client: httpx.AsyncClient,
+        alpha_token_payload: dict,
+        alpha_info_payload: dict,
+    ) -> list[SymbolSnapshot]:
         if alpha_token_payload.get("code") != "000000" or alpha_info_payload.get("code") != "000000":
+            self._latest_alpha_symbol_aliases = {}
+            self._latest_alpha_actual_symbols = {}
             return []
 
         token_by_alpha_id: dict[str, dict] = {}
@@ -178,6 +193,8 @@ class BinanceMarketDataService:
                 token_by_alpha_id[alpha_id] = item
 
         snapshots: list[SymbolSnapshot] = []
+        alias_map: dict[str, str] = {}
+        actual_symbol_map: dict[str, str] = {}
         for symbol_info in alpha_info_payload.get("data", {}).get("symbols", []) or []:
             if symbol_info.get("status") != "TRADING":
                 continue
@@ -187,10 +204,19 @@ class BinanceMarketDataService:
             if not token_item or quote_asset != "USDT":
                 continue
 
-            display_symbol = f"{str(token_item.get('symbol', '')).upper()}USDT"
+            actual_symbol = str(symbol_info.get("symbol", "")).upper()
+            display_symbol = str(token_item.get("symbol", "")).upper()
+            legacy_display_symbol = f"{display_symbol}USDT"
             price = float(token_item.get("price", 0.0) or 0.0)
-            if not display_symbol or price <= 0:
+            liquidity = float(token_item.get("liquidity", 0.0) or 0.0)
+            if not actual_symbol or not display_symbol or price <= 0:
                 continue
+            if liquidity < self.settings.alpha_min_liquidity_usdt:
+                continue
+            if legacy_display_symbol:
+                alias_map[legacy_display_symbol] = display_symbol
+            alias_map[actual_symbol] = display_symbol
+            actual_symbol_map[display_symbol] = actual_symbol
 
             snapshots.append(
                 SymbolSnapshot(
@@ -204,7 +230,71 @@ class BinanceMarketDataService:
                     data_source="binance-alpha",
                 )
             )
-        return snapshots
+
+        filtered = await self._filter_alpha_snapshots_by_market_activity(client, snapshots, actual_symbol_map)
+        self._latest_alpha_symbol_aliases = alias_map
+        self._latest_alpha_actual_symbols = {row.symbol: actual_symbol_map[row.symbol] for row in filtered if row.symbol in actual_symbol_map}
+        return filtered
+
+    async def _filter_alpha_snapshots_by_market_activity(
+        self,
+        client: httpx.AsyncClient,
+        snapshots: list[SymbolSnapshot],
+        actual_symbol_map: dict[str, str],
+    ) -> list[SymbolSnapshot]:
+        filtered: list[SymbolSnapshot] = []
+        for row in snapshots:
+            actual_symbol = actual_symbol_map.get(row.symbol)
+            if not actual_symbol:
+                continue
+            ticker_payload = await self._fetch_json_with_retry(
+                client,
+                f"https://www.binance.com/bapi/defi/v1/public/alpha-trade/ticker?symbol={actual_symbol}",
+                retries=1,
+            )
+            klines_payload = await self._fetch_json_with_retry(
+                client,
+                f"https://www.binance.com/bapi/defi/v1/public/alpha-trade/klines?symbol={actual_symbol}&interval=1d&limit=30",
+                retries=1,
+            )
+            if not self._passes_alpha_market_activity_filter(ticker_payload, klines_payload):
+                continue
+            ticker_data = ticker_payload.get("data", {}) if isinstance(ticker_payload, dict) else {}
+            row.price = float(ticker_data.get("lastPrice", row.price) or row.price)
+            row.volume_24h = float(ticker_data.get("quoteVolume", row.volume_24h) or row.volume_24h)
+            row.change_pct_24h = float(ticker_data.get("priceChangePercent", row.change_pct_24h) or row.change_pct_24h)
+            filtered.append(row)
+        return filtered
+
+    def _passes_alpha_market_activity_filter(self, ticker_payload: Any, klines_payload: Any) -> bool:
+        if not isinstance(ticker_payload, dict) or ticker_payload.get("code") != "000000":
+            return False
+        if not isinstance(klines_payload, dict) or klines_payload.get("code") != "000000":
+            return False
+        ticker_data = ticker_payload.get("data", {}) or {}
+        klines_data = klines_payload.get("data", []) or []
+        try:
+            quote_volume_24h = float(ticker_data.get("quoteVolume", 0.0) or 0.0)
+            trade_count_24h = int(ticker_data.get("count", 0) or 0)
+        except (TypeError, ValueError):
+            return False
+        daily_quote_volumes: list[float] = []
+        for row in klines_data:
+            if not isinstance(row, list) or len(row) < 9:
+                continue
+            try:
+                daily_quote_volumes.append(float(row[7] or 0.0))
+            except (TypeError, ValueError):
+                continue
+        if not daily_quote_volumes:
+            return False
+        ordered = sorted(daily_quote_volumes)
+        median_daily_quote_volume = ordered[len(ordered) // 2]
+        return (
+            quote_volume_24h >= self.settings.alpha_min_quote_volume_24h_usdt
+            and trade_count_24h >= self.settings.alpha_min_trade_count_24h
+            and median_daily_quote_volume >= self.settings.alpha_min_median_daily_quote_volume_30d_usdt
+        )
 
     @staticmethod
     def _extract_spot_trading_symbols(exchange_info_payload: dict) -> set[str]:

@@ -88,6 +88,35 @@ class SimulationExchange:
         self.trades = restored_trades[-5000:]
         return True
 
+    def remap_symbols(self, symbol_aliases: dict[str, str]) -> bool:
+        if not symbol_aliases:
+            return False
+        updated = False
+        remapped_positions: dict[str, Position] = {}
+        for position in self.positions.values():
+            new_symbol = symbol_aliases.get(position.symbol, position.symbol)
+            if new_symbol != position.symbol:
+                position.symbol = new_symbol
+                updated = True
+            remapped_positions[self._position_key(position.symbol, position.market_type)] = position
+        self.positions = remapped_positions
+
+        for trade in self.trades:
+            new_symbol = symbol_aliases.get(trade.symbol, trade.symbol)
+            if new_symbol != trade.symbol:
+                trade.symbol = new_symbol
+                updated = True
+
+        remapped_snapshots: dict[str, SymbolSnapshot] = {}
+        for key, snapshot in self._latest_snapshot_map.items():
+            new_symbol = symbol_aliases.get(snapshot.symbol, snapshot.symbol)
+            if new_symbol != snapshot.symbol:
+                snapshot.symbol = new_symbol
+                updated = True
+            remapped_snapshots[self._position_key(snapshot.symbol, snapshot.market_type)] = snapshot
+        self._latest_snapshot_map = remapped_snapshots
+        return updated
+
     def apply_market_prices(self, watchlist: list[SymbolSnapshot], now_ts_ms: int | None = None) -> None:
         snapshot_map = {self._position_key(item.symbol, item.market_type): item for item in watchlist}
         self._latest_snapshot_map = dict(snapshot_map)

@@ -85,6 +85,52 @@ class EquityHistoryStore:
             return 0
         return sum(1 for line in self.trade_history_path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip())
 
+    def remap_trade_symbols(self, symbol_aliases: dict[str, str]) -> bool:
+        if not symbol_aliases or not self.trade_history_path.exists():
+            return False
+        changed = False
+        remapped_rows: list[str] = []
+        for raw_line in self.trade_history_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if not raw_line.strip():
+                continue
+            try:
+                trade = Trade.model_validate(json.loads(raw_line))
+            except Exception:
+                remapped_rows.append(raw_line)
+                continue
+            new_symbol = symbol_aliases.get(trade.symbol, trade.symbol)
+            if new_symbol != trade.symbol:
+                trade.symbol = new_symbol
+                changed = True
+            remapped_rows.append(trade.model_dump_json())
+        if changed:
+            content = "\n".join(remapped_rows)
+            if content:
+                content += "\n"
+            self.trade_history_path.write_text(content, encoding="utf-8")
+        return changed
+
+    def remap_exchange_state_symbols(self, symbol_aliases: dict[str, str]) -> bool:
+        payload = self.load_exchange_state()
+        if not payload or not symbol_aliases:
+            return False
+        changed = False
+        for key in ("positions", "trades"):
+            items = payload.get(key, [])
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                symbol = str(item.get("symbol", ""))
+                new_symbol = symbol_aliases.get(symbol, symbol)
+                if new_symbol != symbol:
+                    item["symbol"] = new_symbol
+                    changed = True
+        if changed:
+            self.save_exchange_state(payload)
+        return changed
+
     def save_strategy_state(self, payload: dict[str, object]) -> None:
         self.strategy_state_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.strategy_state_path.with_suffix(".tmp")

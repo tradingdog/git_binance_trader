@@ -1,4 +1,5 @@
 import pytest
+import httpx
 
 from git_binance_trader.config import Settings
 from git_binance_trader.core.exchange import SimulationExchange
@@ -125,6 +126,77 @@ async def test_market_data_excludes_large_cap_and_stablecoin_spot_perp() -> None
     assert ("USDCUSDT", MarketType.perpetual) not in symbols
     assert ("SIRENUSDT", MarketType.spot) in symbols
     assert ("SIRENUSDT", MarketType.perpetual) in symbols
+
+
+@pytest.mark.anyio
+async def test_build_alpha_snapshots_uses_searchable_symbol_and_real_market_filter() -> None:
+    service = BinanceMarketDataService(Settings())
+
+    token_payload = {
+        "code": "000000",
+        "data": [
+            {
+                "alphaId": "ALPHA_22",
+                "symbol": "KOGE",
+                "price": "47.99",
+                "volume24h": "267221213.63",
+                "percentChange24h": "0.0",
+                "liquidity": "11920231.52",
+            }
+        ],
+    }
+    exchange_payload = {
+        "code": "000000",
+        "data": {
+            "symbols": [
+                {
+                    "symbol": "ALPHA_22USDT",
+                    "status": "TRADING",
+                    "baseAsset": "ALPHA_22",
+                    "quoteAsset": "USDT",
+                }
+            ]
+        },
+    }
+
+    responses = iter(
+        [
+            {"code": "000000", "data": {"lastPrice": "48.00", "quoteVolume": "6667807.36", "count": 11361, "priceChangePercent": "0.01"}},
+            {"code": "000000", "data": [["1","0","0","0","0","0","0","5226083.22","8504"], ["1","0","0","0","0","0","0","6603002.73","10978"], ["1","0","0","0","0","0","0","1036354.69","2132"]]},
+        ]
+    )
+
+    async def fake_fetch_json_with_retry(*_, **__):
+        return next(responses)
+
+    service._fetch_json_with_retry = fake_fetch_json_with_retry  # type: ignore[method-assign]
+
+    async with httpx.AsyncClient() as client:
+        snapshots = await service._build_alpha_snapshots(client, token_payload, exchange_payload)
+
+    assert len(snapshots) == 1
+    assert snapshots[0].symbol == "KOGE"
+    assert service.alpha_symbol_aliases()["KOGEUSDT"] == "KOGE"
+    assert service.alpha_symbol_aliases()["ALPHA_22USDT"] == "KOGE"
+
+
+def test_alpha_market_activity_filter_rejects_low_liquidity_token() -> None:
+    service = BinanceMarketDataService(Settings())
+
+    ticker_payload = {
+        "code": "000000",
+        "data": {"quoteVolume": "78760.96", "count": 1776},
+    }
+    klines_payload = {
+        "code": "000000",
+        "data": [
+            ["1", "0", "0", "0", "0", "0", "0", "4728.91", "852"],
+            ["1", "0", "0", "0", "0", "0", "0", "14986.62", "1142"],
+            ["1", "0", "0", "0", "0", "0", "0", "16252.28", "1187"],
+        ],
+    }
+
+    assert not service._passes_alpha_market_activity_filter(ticker_payload, klines_payload)
 
 
 def test_apply_market_prices_closes_position_on_stop_loss() -> None:

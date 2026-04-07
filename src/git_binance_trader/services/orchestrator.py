@@ -40,6 +40,7 @@ class TradingOrchestrator:
     async def run_cycle(self) -> DashboardState:
         async with self._lock:
             watchlist = await self.market_data.get_top_symbols()
+            self._migrate_alpha_symbols()
             self._last_watchlist_full = list(watchlist)
             if not watchlist:
                 self.exchange.last_message = "行情API拉取失败，已跳过本轮交易"
@@ -201,6 +202,16 @@ class TradingOrchestrator:
             return
         for trade in self.exchange.trades[persisted_count:]:
             self.history_store.append_trade(trade)
+
+    def _migrate_alpha_symbols(self) -> None:
+        symbol_aliases = self.market_data.alpha_symbol_aliases()
+        if not symbol_aliases:
+            return
+        exchange_changed = self.exchange.remap_symbols(symbol_aliases)
+        history_changed = self.history_store.remap_trade_symbols(symbol_aliases)
+        state_changed = self.history_store.remap_exchange_state_symbols(symbol_aliases)
+        if exchange_changed or history_changed or state_changed:
+            self.history_store.save_exchange_state(self.exchange.export_state())
 
     async def _run_forever(self) -> None:
         while True:

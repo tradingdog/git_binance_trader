@@ -4,7 +4,7 @@ import pytest
 
 from git_binance_trader.config import Settings
 from git_binance_trader.core.exchange import SimulationExchange
-from git_binance_trader.core.models import MarketType, Side, SymbolSnapshot, Trade
+from git_binance_trader.core.models import MarketType, Position, Side, SymbolSnapshot, Trade
 from git_binance_trader.core.risk import RiskManager
 from git_binance_trader.core.strategy import OpportunityStrategy
 from git_binance_trader.services.history import EquityHistoryStore
@@ -175,3 +175,58 @@ def test_restore_strategy_state_keeps_adaptive_params(tmp_path: Path) -> None:
 
     assert another.strategy.params.max_positions == 5
     assert another.strategy.params.entry_score_threshold == 3.33
+
+
+def test_migrate_alpha_symbols_remaps_legacy_display_symbols(tmp_path: Path) -> None:
+    settings = Settings(
+        persistent_data_dir=str(tmp_path / "data"),
+        reports_dir=str(tmp_path / "reports"),
+        logs_dir=str(tmp_path / "logs"),
+        equity_history_file=str(tmp_path / "data" / "history" / "equity-history.jsonl"),
+        exchange_state_file=str(tmp_path / "data" / "history" / "exchange-state.json"),
+        trade_history_file=str(tmp_path / "data" / "history" / "trade-history.jsonl"),
+        strategy_state_file=str(tmp_path / "data" / "history" / "strategy-state.json"),
+    )
+
+    orchestrator = TradingOrchestrator()
+    orchestrator.settings = settings
+    orchestrator.risk_manager = RiskManager(settings)
+    orchestrator.exchange = SimulationExchange(settings, orchestrator.risk_manager)
+    orchestrator.strategy = OpportunityStrategy()
+    orchestrator.history_store = EquityHistoryStore(settings)
+
+    legacy_trade = Trade(
+        symbol="KOGEUSDT",
+        side=Side.buy,
+        quantity=1,
+        price=47.99,
+        market_type=MarketType.alpha,
+        strategy="test",
+    )
+    orchestrator.exchange.trades = [legacy_trade]
+    orchestrator.exchange.positions = {
+        "alpha:KOGEUSDT": Position(
+            symbol="KOGEUSDT",
+            quantity=1,
+            entry_price=47.99,
+            current_price=47.99,
+            market_type=MarketType.alpha,
+            side=Side.buy,
+            leverage=1,
+            stop_loss=45,
+            take_profit=50,
+            highest_price=47.99,
+        )
+    }
+    orchestrator._sync_trade_history()
+    orchestrator.history_store.save_exchange_state(orchestrator.exchange.export_state())
+    orchestrator.market_data._latest_alpha_symbol_aliases = {
+        "KOGEUSDT": "KOGE",
+        "ALPHA_22USDT": "KOGE",
+    }
+
+    orchestrator._migrate_alpha_symbols()
+
+    assert "alpha:KOGE" in orchestrator.exchange.positions
+    assert orchestrator.exchange.trades[0].symbol == "KOGE"
+    assert orchestrator.list_recent_trades(limit=10)[0]["symbol"] == "KOGE"

@@ -35,6 +35,10 @@ class Settings(BaseModel):
     spot_taker_fee_rate: float = 0.00075
     perpetual_maker_fee_rate: float = 0.00018
     perpetual_taker_fee_rate: float = 0.00045
+    alpha_min_liquidity_usdt: float = 5_000_000.0
+    alpha_min_quote_volume_24h_usdt: float = 500_000.0
+    alpha_min_trade_count_24h: int = 2_000
+    alpha_min_median_daily_quote_volume_30d_usdt: float = 500_000.0
     binance_api_key: str = Field(default="")
     binance_api_secret: str = Field(default="")
     fly_api_token: str = Field(default="")
@@ -134,6 +138,12 @@ def get_settings() -> Settings:
         ),
         perpetual_taker_fee_rate=float(
             os.getenv("PERPETUAL_TAKER_FEE_RATE", legacy_perpetual_fee_rate or "0.00045")
+        ),
+        alpha_min_liquidity_usdt=float(os.getenv("ALPHA_MIN_LIQUIDITY_USDT", "5000000")),
+        alpha_min_quote_volume_24h_usdt=float(os.getenv("ALPHA_MIN_QUOTE_VOLUME_24H_USDT", "500000")),
+        alpha_min_trade_count_24h=int(os.getenv("ALPHA_MIN_TRADE_COUNT_24H", "2000")),
+        alpha_min_median_daily_quote_volume_30d_usdt=float(
+            os.getenv("ALPHA_MIN_MEDIAN_DAILY_QUOTE_VOLUME_30D_USDT", "500000")
         ),
         binance_api_key=os.getenv("BINANCE_API_KEY", ""),
         binance_api_secret=os.getenv("BINANCE_API_SECRET", ""),
