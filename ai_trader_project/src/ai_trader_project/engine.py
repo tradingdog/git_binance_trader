@@ -164,6 +164,7 @@ class GovernanceEngine:
     async def start(self) -> None:
         if self._runner is None or self._runner.done():
             self._runner = asyncio.create_task(self._loop())
+            self.state.status = StrategyStatus.running
             self.memory.append_ai("system", "ai_core", "AI治理引擎启动")
 
     async def stop(self) -> None:
@@ -705,7 +706,7 @@ class GovernanceEngine:
         close_fee = margin * 0.0012
         realized = gross_pnl - close_fee
 
-        max_trade_loss = margin * self._governance_config.risk.max_trade_loss_pct / 100
+        max_trade_loss = self.state.equity * self._governance_config.risk.max_trade_loss_pct / 100
         if realized < 0 and abs(realized) > max_trade_loss:
             self.state.status = StrategyStatus.halted
             self.state.ai_message = "触发单笔亏损红线，自动停机"
