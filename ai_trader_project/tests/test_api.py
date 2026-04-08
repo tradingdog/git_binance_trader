@@ -118,6 +118,16 @@ def test_dashboard_endpoint_shape() -> None:
     assert isinstance(payload['trades'], list)
 
 
+def test_home_page_is_server_rendered() -> None:
+    r = client.get('/')
+    assert r.status_code == 200
+    html = r.text
+    assert 'AI治理 + 人类最高权限' in html
+    assert '结构化指令中心' in html
+    assert '加载中...' not in html
+    assert 'bootstrap-data' in html
+
+
 def test_structured_command_task_control_and_audit_replay() -> None:
     r1 = client.post(
         '/api/ai/command/structured',

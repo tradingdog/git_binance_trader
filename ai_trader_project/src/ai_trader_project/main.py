@@ -139,4 +139,5 @@ async def market_timeseries(symbol: str = "", limit: int = 120) -> dict[str, obj
 
 @app.get("/", response_class=HTMLResponse)
 async def page() -> str:
-    return render_dashboard()
+    payload = await engine.governance_payload()
+    return render_dashboard(payload)
