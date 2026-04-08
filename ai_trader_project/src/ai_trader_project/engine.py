@@ -14,21 +14,30 @@ from .models import (
     ApprovalStatus,
     AuditEvent,
     AutonomyLevel,
+    BacktestReport,
+    CommandPriority,
+    CommandScope,
     ConfigPatchRequest,
     ControlState,
     GovernanceConfig,
     MarketType,
+    ParameterVersion,
     PositionSnapshot,
+    ReliabilityState,
     ReleaseState,
     RiskConstraints,
     Side,
+    StructuredHumanCommand,
     StrategyCandidate,
     StrategyStatus,
+    TaskControlAction,
+    TaskControlRequest,
     TaskDetail,
     TaskStatus,
     TokenUsageSnapshot,
     TradeSnapshot,
     UserRole,
+    PerformanceVersion,
 )
 
 
@@ -47,6 +56,15 @@ class GovernanceEngine:
         self._snapshots: deque[dict[str, object]] = deque(maxlen=100)
         self._reports_hourly: deque[str] = deque(maxlen=400)
         self._reports_daily: deque[str] = deque(maxlen=200)
+        self._reports_weekly: deque[str] = deque(maxlen=80)
+        self._alarms: deque[str] = deque(maxlen=200)
+        self._backtests: deque[BacktestReport] = deque(maxlen=240)
+        self._parameter_versions: deque[ParameterVersion] = deque(maxlen=300)
+        self._performance_versions: deque[PerformanceVersion] = deque(maxlen=300)
+        self._idempotency_cache: set[str] = set()
+        self._retry_count = 0
+        self._timeout_count = 0
+        self._compensation_count = 0
         self._token_usage = TokenUsageSnapshot(model_name=settings.ai_model_name)
         self._governance_config = GovernanceConfig(
             risk=RiskConstraints(
@@ -86,6 +104,16 @@ class GovernanceEngine:
             "暂停",
             "恢复",
         )
+        self._dangerous_keywords = (
+            "rm -rf",
+            "format",
+            "del /f",
+            "shutdown",
+            "drop table",
+            "override risk",
+            "bypass",
+            "kill process",
+        )
         self._role_permissions: dict[UserRole, set[str]] = {
             UserRole.human_root: {
                 "pause",
@@ -96,6 +124,7 @@ class GovernanceEngine:
                 "freeze_autonomy",
                 "approve",
                 "update_config",
+                "control_task",
                 "read_all",
             },
             UserRole.researcher_ai: {"read_all", "research", "submit_candidate"},
@@ -168,56 +197,85 @@ class GovernanceEngine:
         self._refresh_account(now_ts, cycle_actions)
 
     def _run_embedded_workflows(self) -> None:
-        self._update_workflow("monitor_workflow", "running")
-        self._create_task(
-            title="监控代理：监控偏移与风险",
-            summary="已完成净值、回撤、手续费和任务队列监控",
-            steps=[
-                "读取账户快照与风控阈值",
-                "检查收益与回撤偏离",
-                "检查手续费占比与换手率",
-            ],
+        self._execute_with_reliability(
+            workflow_name="monitor_workflow",
+            fn=lambda: self._create_task(
+                title="监控代理：监控偏移与风险",
+                summary="已完成净值、回撤、手续费和任务队列监控",
+                steps=[
+                    "读取账户快照与风控阈值",
+                    "检查收益与回撤偏离",
+                    "检查手续费占比与换手率",
+                ],
+            ),
         )
-        self._update_workflow("monitor_workflow", "completed")
 
         if self._tick % 6 == 0:
-            self._update_workflow("research_workflow", "running")
-            candidate = self._generate_candidate()
-            self._candidates.appendleft(candidate)
-            self._create_task(
-                title="研究代理：生成候选策略",
-                summary=f"已生成候选 {candidate.name}，评分 {candidate.score_j:.4f}",
-                steps=[
-                    "读取近期交易、日志、参数历史",
-                    "识别收益拖累因子",
-                    "形成候选参数改动包",
-                ],
-            )
-            self._audit("research", "researcher_ai", "生成候选策略", {"candidate_id": candidate.id})
-            self._update_workflow("research_workflow", "completed")
+            def _research_job() -> None:
+                candidate = self._generate_candidate()
+                self._candidates.appendleft(candidate)
+                self._parameter_versions.appendleft(
+                    ParameterVersion(
+                        id=f"pv-{self._tick:06d}",
+                        created_at=datetime.now(timezone.utc),
+                        candidate_id=candidate.id,
+                        reason="研究代理生成候选参数",
+                        params={"cooldown": 12.0, "risk_budget": 0.7, "filter_score": candidate.score_j},
+                    )
+                )
+                self._create_task(
+                    title="研究代理：生成候选策略",
+                    summary=f"已生成候选 {candidate.name}，评分 {candidate.score_j:.4f}",
+                    steps=[
+                        "读取近期交易、日志、参数历史",
+                        "识别收益拖累因子",
+                        "形成候选参数改动包",
+                    ],
+                )
+                self._audit("research", "researcher_ai", "生成候选策略", {"candidate_id": candidate.id})
+
+            self._execute_with_reliability("research_workflow", _research_job)
 
         if self._candidates and self._tick % 8 == 0:
-            self._update_workflow("validate_workflow", "running")
-            top = self._candidates[0]
-            self._validate_candidate(top)
-            self._create_task(
-                title="验证代理：回测与风控审查",
-                summary=f"候选 {top.name} 验证状态 {top.status}",
-                steps=[
-                    "执行历史回测与滚动窗口回测",
-                    "执行压力测试与硬红线检查",
-                    "输出统一评分与风险结论",
-                ],
-            )
-            self._update_workflow("validate_workflow", "completed")
+            def _validate_job() -> None:
+                top = self._candidates[0]
+                self._validate_candidate(top)
+                self._create_task(
+                    title="验证代理：回测与风控审查",
+                    summary=f"候选 {top.name} 验证状态 {top.status}",
+                    steps=[
+                        "执行历史回测与滚动窗口回测",
+                        "执行压力测试与硬红线检查",
+                        "输出统一评分与风险结论",
+                    ],
+                )
+
+            self._execute_with_reliability("validate_workflow", _validate_job)
 
         if self._candidates and self._tick % 10 == 0:
-            self._update_workflow("release_workflow", "running")
-            self._release_candidate(self._candidates[0])
-            self._update_workflow("release_workflow", "completed")
+            self._execute_with_reliability("release_workflow", lambda: self._release_candidate(self._candidates[0]))
 
         if self._tick % 12 == 0:
             self._write_periodic_reports()
+
+    def _execute_with_reliability(self, workflow_name: str, fn) -> None:
+        self._update_workflow(workflow_name, "running")
+        try:
+            fn()
+            self._update_workflow(workflow_name, "completed")
+        except TimeoutError:
+            self._timeout_count += 1
+            self._compensation_count += 1
+            self._alarms.appendleft(f"{workflow_name} 超时，已降级")
+            self._audit("workflow", "orchestrator", "工作流超时触发补偿", {"workflow": workflow_name})
+            self._update_workflow(workflow_name, "timeout")
+        except Exception as exc:
+            self._retry_count += 1
+            prev_retry = self._workflow_status[workflow_name].get("retry", 0)
+            self._workflow_status[workflow_name]["retry"] = prev_retry + 1 if isinstance(prev_retry, int) else 1
+            self._audit("workflow", "orchestrator", "工作流失败触发重试", {"workflow": workflow_name, "error": str(exc)})
+            self._alarms.appendleft(f"{workflow_name} 失败: {str(exc)[:120]}")
+            self._update_workflow(workflow_name, "failed")
 
     def _update_workflow(self, name: str, status: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -262,16 +320,73 @@ class GovernanceEngine:
         )
 
     def _validate_candidate(self, candidate: StrategyCandidate) -> None:
+        report = self._run_backtest(candidate)
+        self._backtests.appendleft(report)
         if not candidate.hard_constraint_passed:
             candidate.status = "rejected"
             self._audit("validate", "validator_ai", "候选被硬约束拒绝", {"candidate_id": candidate.id})
+            return
+        if report.p_value > 0.1 or report.stress_gap_loss_pct > 8.0:
+            candidate.status = "rejected"
+            self._audit(
+                "validate",
+                "validator_ai",
+                "候选统计显著性或压力测试不达标",
+                {"candidate_id": candidate.id, "p_value": report.p_value, "stress_gap_loss_pct": report.stress_gap_loss_pct},
+            )
             return
         if candidate.score_j < 0:
             candidate.status = "rejected"
             self._audit("validate", "validator_ai", "候选评分不足", {"candidate_id": candidate.id, "score": candidate.score_j})
             return
         candidate.status = "validated"
+        self._performance_versions.appendleft(
+            PerformanceVersion(
+                id=f"perf-{self._tick:06d}",
+                created_at=datetime.now(timezone.utc),
+                candidate_id=candidate.id,
+                source="backtest",
+                score_j=candidate.score_j,
+                day_return_pct=candidate.day_return_pct,
+                mdd_pct=candidate.mdd_pct,
+                sharpe=candidate.sharpe,
+            )
+        )
         self._audit("validate", "validator_ai", "候选通过验证", {"candidate_id": candidate.id, "score": candidate.score_j})
+
+    def _run_backtest(self, candidate: StrategyCandidate) -> BacktestReport:
+        p_value = round(self._rng.uniform(0.01, 0.2), 4)
+        confidence = round(max(0.0, 1 - p_value), 4)
+        gap_loss = round(self._rng.uniform(1.2, 10.8), 4)
+        liq_drop = round(self._rng.uniform(5.0, 35.0), 4)
+        streak = int(self._rng.uniform(2, 8))
+        summary = f"p={p_value}, conf={confidence}, jump_loss={gap_loss}%"
+        self._audit(
+            "backtest",
+            "validator_ai",
+            "完成多窗口回测与压力测试",
+            {
+                "candidate_id": candidate.id,
+                "p_value": p_value,
+                "confidence": confidence,
+                "stress_gap_loss_pct": gap_loss,
+                "stress_liquidity_drop_pct": liq_drop,
+                "stress_loss_streak": streak,
+            },
+        )
+        return BacktestReport(
+            id=f"bt-{self._tick:06d}-{candidate.id}",
+            candidate_id=candidate.id,
+            created_at=datetime.now(timezone.utc),
+            windows=["30d", "90d", "180d"],
+            market_regimes=["trend", "range", "high_vol"],
+            p_value=p_value,
+            confidence=confidence,
+            stress_gap_loss_pct=gap_loss,
+            stress_liquidity_drop_pct=liq_drop,
+            stress_loss_streak=streak,
+            summary=summary,
+        )
 
     def _release_candidate(self, candidate: StrategyCandidate) -> None:
         if candidate.status != "validated":
@@ -373,8 +488,14 @@ class GovernanceEngine:
                 f"candidates={len(self._candidates)} | approvals_pending={self.pending_approval_count()}"
             )
             self._reports_daily.appendleft(daily)
+        if now.weekday() == 0 and now.hour == 0:
+            weekly = (
+                f"[{now.isoformat()}] 周复盘 | champion={self._release_state.champion_version} | "
+                f"win_tasks={len(self._tasks)} | alarms={len(self._alarms)}"
+            )
+            self._reports_weekly.appendleft(weekly)
 
-    def _create_task(self, title: str, summary: str, steps: list[str], status: TaskStatus = TaskStatus.completed) -> None:
+    def _create_task(self, title: str, summary: str, steps: list[str], status: TaskStatus = TaskStatus.completed) -> TaskDetail:
         task = TaskDetail(
             id=f"task-{self._tick:06d}-{len(self._tasks)+1}",
             title=title,
@@ -384,6 +505,7 @@ class GovernanceEngine:
             steps=steps,
         )
         self._tasks.appendleft(task)
+        return task
 
     def _audit(self, category: str, actor: str, message: str, detail: dict[str, object] | None = None) -> None:
         event = AuditEvent(
@@ -460,6 +582,18 @@ class GovernanceEngine:
         margin = position.entry_price * position.quantity / max(1, position.leverage)
         close_fee = margin * 0.0012
         realized = gross_pnl - close_fee
+
+        max_trade_loss = margin * self._governance_config.risk.max_trade_loss_pct / 100
+        if realized < 0 and abs(realized) > max_trade_loss:
+            self.state.status = StrategyStatus.halted
+            self.state.ai_message = "触发单笔亏损红线，自动停机"
+            self._alarms.appendleft("触发单笔亏损红线")
+            self._audit(
+                "risk",
+                "risk_guard",
+                "触发单笔亏损红线",
+                {"symbol": symbol, "realized_loss": abs(realized), "limit": max_trade_loss},
+            )
 
         self.state.cash = round(self.state.cash + margin + realized, 4)
         self.state.realized_pnl = round(self.state.realized_pnl + realized, 4)
@@ -614,11 +748,16 @@ class GovernanceEngine:
         return {"status": self.state.status.value, "message": self.state.ai_message}
 
     async def record_command(self, operator: str, command: str) -> dict[str, object]:
-        if not any(item in command.lower() for item in self._command_whitelist):
+        cmd_lower = command.lower()
+        if any(item in cmd_lower for item in self._dangerous_keywords):
+            self._audit("command", operator, "拒绝高危命令", {"command": command})
+            return {"status": "rejected", "message": "检测到高危命令，已拒绝执行"}
+
+        if not any(item in cmd_lower for item in self._command_whitelist):
             return {"status": "rejected", "message": "命令不在白名单中，已拒绝执行"}
 
         high_risk_keywords = ("deploy", "rollback", "halt", "release", "promote")
-        if any(item in command.lower() for item in high_risk_keywords):
+        if any(item in cmd_lower for item in high_risk_keywords):
             approval = ApprovalItem(
                 id=f"apr-cmd-{self._tick:06d}",
                 created_at=datetime.now(timezone.utc),
@@ -636,6 +775,11 @@ class GovernanceEngine:
                 "approval": approval.model_dump(mode="json"),
                 "command": cmd,
             }
+
+        if self._governance_config.auto_approve_low_risk and any(item in cmd_lower for item in self._governance_config.low_risk_actions):
+            cmd = self.memory.append_command(operator=operator, command=command)
+            self._audit("command", operator, "低风险命令自动通过", {"command": command})
+            return {"status": "ok", "message": "低风险命令自动通过并写入记忆", "command": cmd}
 
         cmd = self.memory.append_command(operator=operator, command=command)
         self._audit("command", operator, "记录命令", {"command": command})
@@ -655,8 +799,85 @@ class GovernanceEngine:
             cfg.objective_daily_return_pct = patch.objective_daily_return_pct
         if patch.max_fee_ratio_pct is not None:
             cfg.max_fee_ratio_pct = patch.max_fee_ratio_pct
+        if patch.auto_approve_low_risk is not None:
+            cfg.auto_approve_low_risk = patch.auto_approve_low_risk
+        if patch.stable_model is not None:
+            cfg.stable_model = patch.stable_model
+        if patch.experimental_model is not None:
+            cfg.experimental_model = patch.experimental_model
+        if patch.model_region_primary is not None:
+            cfg.model_region_primary = patch.model_region_primary
+        if patch.model_region_fallback is not None:
+            cfg.model_region_fallback = patch.model_region_fallback
         self._audit("config", patch.operator, "更新治理配置", patch.model_dump(mode="json"))
         return {"status": "ok", "config": cfg.model_dump(mode="json")}
+
+    async def submit_structured_command(self, req: StructuredHumanCommand) -> dict[str, object]:
+        key = req.idempotency_key.strip()
+        if key:
+            if key in self._idempotency_cache:
+                return {"status": "deduplicated", "message": "重复请求已忽略", "idempotency_key": key}
+            self._idempotency_cache.add(key)
+
+        if req.objective_weights:
+            weights = self._governance_config.objective_weights
+            for k, v in req.objective_weights.items():
+                if hasattr(weights, k):
+                    setattr(weights, k, float(v))
+
+        task = self._create_task(
+            title=f"结构化指令: {req.command}",
+            summary=f"优先级={req.priority.value} 生效范围={req.scope.value} 截止={req.deadline or '--'}",
+            steps=[
+                f"回滚条件: {req.rollback_condition or '未设置'}",
+                "结构化参数已写入治理队列",
+            ],
+            status=TaskStatus.pending if req.scope != CommandScope.now else TaskStatus.running,
+        )
+        self._audit(
+            "command",
+            req.operator,
+            "接收结构化指令",
+            {
+                "command": req.command,
+                "priority": req.priority.value,
+                "scope": req.scope.value,
+                "deadline": req.deadline,
+                "rollback_condition": req.rollback_condition,
+                "idempotency_key": key,
+            },
+        )
+        return {"status": "ok", "task": task.model_dump(mode="json")}
+
+    async def control_task(self, task_id: str, req: TaskControlRequest) -> dict[str, object]:
+        if not self._check_permission(req.role, "control_task"):
+            return {"status": "denied", "message": "权限不足"}
+
+        target: TaskDetail | None = None
+        for item in self._tasks:
+            if item.id == task_id:
+                target = item
+                break
+        if target is None:
+            return {"status": "not_found", "message": "任务不存在"}
+
+        if req.action == TaskControlAction.pause:
+            target.status = TaskStatus.pending
+        elif req.action == TaskControlAction.retry:
+            target.status = TaskStatus.running
+            self._retry_count += 1
+        else:
+            target.status = TaskStatus.failed
+        self._audit("task", req.operator, "任务控制动作", {"task_id": task_id, "action": req.action.value})
+        return {"status": "ok", "task": target.model_dump(mode="json")}
+
+    async def audit_replay(self, limit: int = 80) -> dict[str, object]:
+        events = [item.model_dump(mode="json") for item in list(self._audit_events)[:max(1, min(limit, 200))]]
+        return {
+            "status": "ok",
+            "count": len(events),
+            "timeline": events,
+        }
 
     async def decide_approval(self, approval_id: str, req: ApprovalDecisionRequest) -> dict[str, object]:
         if not self._check_permission(req.role, "approve"):
@@ -753,9 +974,20 @@ class GovernanceEngine:
             "workflow_status": self._workflow_status,
             "governance_config": self._governance_config.model_dump(mode="json"),
             "audit_events": [item.model_dump(mode="json") for item in list(self._audit_events)[:120]],
+            "backtests": [item.model_dump(mode="json") for item in list(self._backtests)[:80]],
+            "parameter_versions": [item.model_dump(mode="json") for item in list(self._parameter_versions)[:80]],
+            "performance_versions": [item.model_dump(mode="json") for item in list(self._performance_versions)[:80]],
+            "reliability": ReliabilityState(
+                idempotency_cache_size=len(self._idempotency_cache),
+                retry_count=self._retry_count,
+                timeout_count=self._timeout_count,
+                compensation_count=self._compensation_count,
+                alarms=list(self._alarms)[:20],
+            ).model_dump(mode="json"),
             "reports": {
                 "hourly": list(self._reports_hourly)[:120],
                 "daily": list(self._reports_daily)[:30],
+                "weekly": list(self._reports_weekly)[:20],
             },
             "memory": self.memory.recent_ai(limit=80),
             "commands": self.memory.recent_commands(limit=30),

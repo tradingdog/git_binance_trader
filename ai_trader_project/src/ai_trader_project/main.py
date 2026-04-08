@@ -12,6 +12,8 @@ from ai_trader_project.models import (
     ApprovalDecisionRequest,
     ConfigPatchRequest,
     HumanCommand,
+    StructuredHumanCommand,
+    TaskControlRequest,
 )
 from ai_trader_project.web.dashboard import render_dashboard
 
@@ -56,6 +58,11 @@ async def submit_command(payload: HumanCommand) -> dict[str, object]:
     return await engine.record_command(operator=payload.operator, command=payload.command)
 
 
+@app.post("/api/ai/command/structured")
+async def submit_structured_command(payload: StructuredHumanCommand) -> dict[str, object]:
+    return await engine.submit_structured_command(payload)
+
+
 @app.post("/api/actions/pause")
 async def pause(payload: ActionRequest | None = None) -> dict[str, str]:
     _ = payload
@@ -98,6 +105,16 @@ async def patch_governance_config(payload: ConfigPatchRequest) -> dict[str, obje
 @app.post("/api/governance/approvals/{approval_id}")
 async def decide_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict[str, object]:
     return await engine.decide_approval(approval_id=approval_id, req=payload)
+
+
+@app.post("/api/tasks/{task_id}/control")
+async def control_task(task_id: str, payload: TaskControlRequest) -> dict[str, object]:
+    return await engine.control_task(task_id=task_id, req=payload)
+
+
+@app.get("/api/audit/replay")
+async def audit_replay(limit: int = 80) -> dict[str, object]:
+    return await engine.audit_replay(limit=limit)
 
 
 @app.get("/", response_class=HTMLResponse)

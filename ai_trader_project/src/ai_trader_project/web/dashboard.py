@@ -135,6 +135,18 @@ def render_dashboard() -> str:
       </div>
 
       <div class='panel span-6'>
+        <h3 style='margin:0 0 8px'>结构化指令中心</h3>
+        <textarea id='scmd' placeholder='结构化指令描述'></textarea>
+        <div class='btns' style='margin-top:8px'>
+          <button class='btn' data-priority='low'>低优先级</button>
+          <button class='btn warn' data-priority='medium'>中优先级</button>
+          <button class='btn danger' data-priority='high'>高优先级</button>
+        </div>
+        <button id='send-structured' class='btn' style='margin-top:8px'>提交结构化指令</button>
+        <div id='scmd-result' class='status'>未提交</div>
+      </div>
+
+      <div class='panel span-6'>
         <h3 style='margin:0 0 8px'>自治总控与目标红线</h3>
         <div class='kv'>
           <b>自治等级</b><span id='g-level'>--</span>
@@ -234,6 +246,11 @@ def render_dashboard() -> str:
         <div id='report-log' class='log-box'>加载中...</div>
       </div>
 
+      <div class='panel span-6'>
+        <h3 style='margin:0 0 8px'>可靠性状态</h3>
+        <div id='reliability-log' class='log-box'>加载中...</div>
+      </div>
+
       <div class='panel span-12 footer'>
         <a id='human-link' target='_blank' rel='noopener'>人类版本</a>
         <span> | </span>
@@ -274,7 +291,8 @@ def render_dashboard() -> str:
       if(!tasks||!tasks.length){box.innerHTML = "<div class='status'>暂无任务细节</div>"; return;}
       box.innerHTML = tasks.map(t=>{
         const steps = (t.steps||[]).map(s=>"<li>"+s+"</li>").join('');
-        return "<details><summary>"+t.title+" | "+(t.status||'--')+" | "+ts(t.created_at)+"</summary><div class='detail-meta'>摘要："+(t.summary||'--')+"</div><ul class='detail-steps'>"+steps+"</ul></details>";
+        const controls = "<div style='margin-top:8px'><button class='btn' style='padding:6px 8px' onclick=\"controlTask('"+t.id+"','pause')\">暂停</button> <button class='btn warn' style='padding:6px 8px' onclick=\"controlTask('"+t.id+"','retry')\">重试</button> <button class='btn danger' style='padding:6px 8px' onclick=\"controlTask('"+t.id+"','terminate')\">终止</button></div>";
+        return "<details><summary>"+t.title+" | "+(t.status||'--')+" | "+ts(t.created_at)+"</summary><div class='detail-meta'>摘要："+(t.summary||'--')+"</div><ul class='detail-steps'>"+steps+"</ul>"+controls+"</details>";
       }).join('');
     }
 
@@ -303,13 +321,30 @@ def render_dashboard() -> str:
     function renderReports(payload){
       const hourly = payload?.hourly || [];
       const daily = payload?.daily || [];
+      const weekly = payload?.weekly || [];
       const lines = [];
       lines.push('=== 小时报告 ===');
       lines.push(...hourly.slice(0,20));
       lines.push('');
       lines.push('=== 日报告 ===');
       lines.push(...daily.slice(0,10));
+      lines.push('');
+      lines.push('=== 周报告 ===');
+      lines.push(...weekly.slice(0,6));
       return lines.join('\n') || '暂无报告';
+    }
+
+    function renderReliability(p){
+      if(!p){return '暂无可靠性信息';}
+      return [
+        '幂等缓存: '+(p.idempotency_cache_size ?? '--'),
+        '重试次数: '+(p.retry_count ?? '--'),
+        '超时次数: '+(p.timeout_count ?? '--'),
+        '补偿次数: '+(p.compensation_count ?? '--'),
+        '',
+        '告警:',
+        ...((p.alarms||[]).slice(0,15))
+      ].join('\n');
     }
 
     async function load(){
@@ -369,6 +404,7 @@ def render_dashboard() -> str:
       document.getElementById('cmd-log').textContent = renderLogRows(p.commands || [], 'command');
       document.getElementById('audit-log').textContent = renderAudit(p.audit_events || []);
       document.getElementById('report-log').textContent = renderReports(p.reports || {});
+      document.getElementById('reliability-log').textContent = renderReliability(p.reliability || {});
 
       const hu = p.human_version?.dashboard_url || '#';
       const au = p.ai_version?.dashboard_url || '#';
@@ -410,8 +446,45 @@ def render_dashboard() -> str:
       await load();
     }
 
+    async function sendStructuredCmd(){
+      const val = document.getElementById('scmd').value.trim();
+      if(!val){document.getElementById('scmd-result').textContent='请输入内容';return;}
+      const selected = document.querySelector('[data-priority].danger, [data-priority].warn, [data-priority].active');
+      let priority = 'medium';
+      if(selected && selected.dataset && selected.dataset.priority){priority = selected.dataset.priority;}
+      const payload = {
+        command: val,
+        operator: 'human',
+        priority,
+        scope: 'next_cycle',
+        objective_weights: {w1_day_return: 1.1, w3_mdd: 1.0},
+        deadline: 'T+1h',
+        rollback_condition: '回撤连续2轮放大',
+        idempotency_key: 'ui-'+Date.now()
+      };
+      const r = await fetch('/api/ai/command/structured',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const d = await r.json();
+      document.getElementById('scmd-result').textContent = d.message || d.status || '已提交';
+      document.getElementById('scmd').value='';
+      await load();
+    }
+
+    async function controlTask(taskId, action){
+      const r = await fetch('/api/tasks/'+taskId+'/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operator:'human',role:'human_root',action})});
+      const d = await r.json();
+      document.getElementById('action-result').textContent = '任务控制: '+(d.status||'--');
+      await load();
+    }
+
     document.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>act(b.dataset.act).catch(e=>document.getElementById('action-result').textContent='失败: '+String(e))));
+    document.querySelectorAll('[data-priority]').forEach(b=>b.addEventListener('click',()=>{
+      document.querySelectorAll('[data-priority]').forEach(x=>x.classList.remove('active','warn','danger'));
+      b.classList.add('active');
+      if(b.dataset.priority==='high') b.classList.add('danger');
+      else if(b.dataset.priority==='medium') b.classList.add('warn');
+    }));
     document.getElementById('send').addEventListener('click',()=>sendCmd().catch(e=>document.getElementById('cmd-result').textContent='失败: '+String(e)));
+    document.getElementById('send-structured').addEventListener('click',()=>sendStructuredCmd().catch(e=>document.getElementById('scmd-result').textContent='失败: '+String(e)));
     load().catch(e=>{document.getElementById('runtime-log').textContent='加载失败: '+String(e);});
     setInterval(()=>load().catch(()=>{}),5000);
   </script>

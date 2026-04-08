@@ -26,6 +26,25 @@ class UserRole(str, Enum):
     viewer = "viewer"
 
 
+class TaskControlAction(str, Enum):
+    pause = "pause"
+    retry = "retry"
+    terminate = "terminate"
+
+
+class CommandPriority(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
+class CommandScope(str, Enum):
+    now = "now"
+    next_cycle = "next_cycle"
+    today = "today"
+    weekly = "weekly"
+
+
 class TaskStatus(str, Enum):
     pending = "pending"
     running = "running"
@@ -89,6 +108,12 @@ class GovernanceConfig(BaseModel):
     allow_night_autonomy: bool = False
     objective_daily_return_pct: float = 1.0
     max_fee_ratio_pct: float = 35.0
+    auto_approve_low_risk: bool = True
+    low_risk_actions: list[str] = Field(default_factory=lambda: ["test", "backtest", "analyze", "report"])
+    stable_model: str = "gemini-2.5-pro"
+    experimental_model: str = "gemini-3.1-pro-preview"
+    model_region_primary: str = "global"
+    model_region_fallback: str = "asia-east1"
     risk: RiskConstraints = Field(default_factory=RiskConstraints)
     objective_weights: ObjectiveWeights = Field(default_factory=ObjectiveWeights)
 
@@ -192,6 +217,47 @@ class AuditEvent(BaseModel):
     detail: dict[str, object] = Field(default_factory=dict)
 
 
+class BacktestReport(BaseModel):
+    id: str
+    candidate_id: str
+    created_at: datetime
+    windows: list[str] = Field(default_factory=list)
+    market_regimes: list[str] = Field(default_factory=list)
+    p_value: float
+    confidence: float
+    stress_gap_loss_pct: float
+    stress_liquidity_drop_pct: float
+    stress_loss_streak: int
+    summary: str
+
+
+class ParameterVersion(BaseModel):
+    id: str
+    created_at: datetime
+    candidate_id: str
+    reason: str
+    params: dict[str, float] = Field(default_factory=dict)
+
+
+class PerformanceVersion(BaseModel):
+    id: str
+    created_at: datetime
+    candidate_id: str
+    source: str
+    score_j: float
+    day_return_pct: float
+    mdd_pct: float
+    sharpe: float
+
+
+class ReliabilityState(BaseModel):
+    idempotency_cache_size: int
+    retry_count: int
+    timeout_count: int
+    compensation_count: int
+    alarms: list[str] = Field(default_factory=list)
+
+
 class HumanCommand(BaseModel):
     command: str
     operator: str = "human"
@@ -210,6 +276,28 @@ class ConfigPatchRequest(BaseModel):
     allow_night_autonomy: bool | None = None
     objective_daily_return_pct: float | None = None
     max_fee_ratio_pct: float | None = None
+    auto_approve_low_risk: bool | None = None
+    stable_model: str | None = None
+    experimental_model: str | None = None
+    model_region_primary: str | None = None
+    model_region_fallback: str | None = None
+
+
+class StructuredHumanCommand(BaseModel):
+    command: str
+    operator: str = "human"
+    priority: CommandPriority = CommandPriority.medium
+    scope: CommandScope = CommandScope.next_cycle
+    objective_weights: dict[str, float] = Field(default_factory=dict)
+    deadline: str = ""
+    rollback_condition: str = ""
+    idempotency_key: str = ""
+
+
+class TaskControlRequest(BaseModel):
+    operator: str = "human"
+    role: UserRole = UserRole.human_root
+    action: TaskControlAction
 
 
 class ApprovalDecisionRequest(BaseModel):

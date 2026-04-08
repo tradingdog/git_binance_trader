@@ -34,6 +34,10 @@ def test_governance_payload() -> None:
     assert 'candidates' in payload
     assert 'audit_events' in payload
     assert 'reports' in payload
+    assert 'reliability' in payload
+    assert 'backtests' in payload
+    assert 'parameter_versions' in payload
+    assert 'performance_versions' in payload
     assert 'total_cost_usd' in payload['ai_usage']
 
 
@@ -107,3 +111,51 @@ def test_dashboard_endpoint_shape() -> None:
     assert 'ai_usage' in payload
     assert isinstance(payload['positions'], list)
     assert isinstance(payload['trades'], list)
+
+
+def test_structured_command_task_control_and_audit_replay() -> None:
+    r1 = client.post(
+        '/api/ai/command/structured',
+        json={
+            'command': '优化候选参数权重',
+            'operator': 'human',
+            'priority': 'high',
+            'scope': 'next_cycle',
+            'objective_weights': {'w1_day_return': 1.2, 'w3_mdd': 1.1},
+            'deadline': 'T+2h',
+            'rollback_condition': '当日回撤超过2%',
+            'idempotency_key': 'test-key-001',
+        },
+    )
+    assert r1.status_code == 200
+    assert r1.json()['status'] == 'ok'
+    task_id = r1.json()['task']['id']
+
+    r2 = client.post(
+        f'/api/tasks/{task_id}/control',
+        json={'operator': 'human', 'role': 'human_root', 'action': 'retry'},
+    )
+    assert r2.status_code == 200
+    assert r2.json()['status'] == 'ok'
+
+    r3 = client.get('/api/audit/replay?limit=20')
+    assert r3.status_code == 200
+    assert r3.json()['status'] == 'ok'
+    assert 'timeline' in r3.json()
+
+    # 幂等键重复应被去重
+    r4 = client.post(
+        '/api/ai/command/structured',
+        json={
+            'command': '优化候选参数权重',
+            'operator': 'human',
+            'priority': 'high',
+            'scope': 'next_cycle',
+            'objective_weights': {'w1_day_return': 1.2},
+            'deadline': 'T+2h',
+            'rollback_condition': '当日回撤超过2%',
+            'idempotency_key': 'test-key-001',
+        },
+    )
+    assert r4.status_code == 200
+    assert r4.json()['status'] == 'deduplicated'

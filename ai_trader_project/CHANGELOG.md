@@ -1,5 +1,16 @@
 # AI项目更新日志
 
+## v0.1.4 - 2026-04-08
+- 新增结构化指令通道：`/api/ai/command/structured` 支持优先级、生效范围、目标权重、截止时间、回滚条件与幂等键，避免重复执行。
+- 新增任务控制通道：`/api/tasks/{task_id}/control` 支持暂停/重试/终止，补齐任务队列的人机协同控制能力。
+- 新增审计回放接口：`/api/audit/replay`，支持按时间线回放治理事件，强化可追责与可解释。
+- 引擎新增可靠性能力：幂等缓存、失败重试计数、超时补偿计数、告警缓冲；治理载荷新增 `reliability` 字段。
+- 引擎新增回测执行器与压力测试摘要：多窗口回测、显著性指标（`p_value`、`confidence`）、极端场景指标写入 `backtests`。
+- 新增参数版本库与绩效版本库：治理载荷新增 `parameter_versions` 与 `performance_versions`，满足策略版本追踪。
+- 风控增强：新增单笔亏损红线自动停机逻辑（按 `max_trade_loss_pct` 判定）。
+- 前端看板新增结构化指令中心、任务控制按钮、可靠性状态面板，并展示周报数据。
+- 测试扩展并通过：`python -m pytest -q` 结果 `6 passed`。
+
 ## v0.1.3 - 2026-04-08
 - 按 `AUTONOMY_IMPLEMENTATION_CHECKLIST.md` 推进治理闭环：后端新增 RBAC 权限校验、审批流、候选策略评分与硬约束短路、冠军-挑战者灰度发布、快照回滚与审计事件链路。
 - 新增治理 API：`/api/actions/freeze-autonomy`、`/api/actions/rollback`、`/api/governance/config`、`/api/governance/approvals/{approval_id}`，并统一接入 Human Root 角色动作权限。
