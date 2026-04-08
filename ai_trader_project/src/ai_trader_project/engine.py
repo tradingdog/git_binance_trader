@@ -6,6 +6,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 from .config import Settings
+from .market_universe import MarketCandidate, MarketUniverseBuilder
 from .memory import MemoryStore
 from .models import (
     ActionRequest,
@@ -71,6 +72,9 @@ class GovernanceEngine:
         self._code_proposals: deque[CodeProposal] = deque(maxlen=200)
         self._code_versions: deque[CodeVersionRecord] = deque(maxlen=200)
         self._market_history: deque[MarketCandle] = deque(maxlen=2000)
+        self._market_universe_builder = MarketUniverseBuilder(timeout_seconds=4.0)
+        self._market_universe: list[MarketCandidate] = []
+        self._market_universe_refresh_failed = 0
         self._recovery_continuity_count = 0
         self._explanation_quality_score = 0.62
         self._retry_count = 0
@@ -192,10 +196,17 @@ class GovernanceEngine:
     def _simulate_cycle(self) -> None:
         now_ts = datetime.now(timezone.utc)
         cycle_actions: list[str] = []
+        self._refresh_market_universe()
+        latest_price_map = {item.symbol: item.price for item in self._market_universe}
 
         for symbol, position in list(self._position_book.items()):
-            change_ratio = self._rng.uniform(-0.015, 0.02)
-            next_price = max(0.1, position.current_price * (1 + change_ratio))
+            market_price = latest_price_map.get(symbol)
+            if market_price and market_price > 0:
+                # 贴近真实盘口：以抓取到的实时价为锚点，叠加小幅随机扰动模拟成交滑点。
+                next_price = max(0.0001, market_price * (1 + self._rng.uniform(-0.002, 0.002)))
+            else:
+                change_ratio = self._rng.uniform(-0.015, 0.02)
+                next_price = max(0.1, position.current_price * (1 + change_ratio))
             unrealized = (next_price - position.entry_price) * position.quantity
             position.current_price = round(next_price, 4)
             position.unrealized_pnl = round(unrealized, 4)
@@ -358,31 +369,32 @@ class GovernanceEngine:
             status="pending_validation",
         )
 
-    # 各交易对真实参考价格区间（2026年4月）与成交量区间（以基础币计）
-    _TIMESERIES_PRICE_RANGES: dict[str, tuple[float, float]] = {
-        "BTCUSDT":  (68_000, 74_000),
-        "ETHUSDT":  ( 3_200,  3_600),
-        "SOLUSDT":  (   140,    160),
-        "DOGEUSDT": (  0.15,   0.25),
-    }
-    _TIMESERIES_VOL_RANGES: dict[str, tuple[float, float]] = {
-        "BTCUSDT":  (     50,      300),
-        "ETHUSDT":  (    500,    3_000),
-        "SOLUSDT":  (  5_000,   50_000),
-        "DOGEUSDT": (500_000, 5_000_000),
-    }
+    def _refresh_market_universe(self) -> None:
+        # 统一市场池：与人类版本一致，按 Binance 实时数据构建，不再使用硬编码少量交易对。
+        refresh_ticks = max(1, self.settings.market_universe_refresh_ticks)
+        need_refresh = not self._market_universe or self._tick % refresh_ticks == 0
+        if not need_refresh:
+            return
+        latest = self._market_universe_builder.build(limit=max(10, self.settings.market_universe_limit))
+        if latest:
+            self._market_universe = latest
+            self._market_universe_refresh_failed = 0
+            return
+        self._market_universe_refresh_failed += 1
 
     def _append_market_timeseries(self, now_ts: datetime) -> None:
-        for sym, (price_lo, price_hi) in self._TIMESERIES_PRICE_RANGES.items():
-            base = self._rng.uniform(price_lo, price_hi)
-            op = round(base, 4)
-            cl = round(base * (1 + self._rng.uniform(-0.01, 0.01)), 4)
-            hi = round(max(op, cl) * (1 + self._rng.uniform(0.0, 0.005)), 4)
-            lo = round(min(op, cl) * (1 - self._rng.uniform(0.0, 0.005)), 4)
-            vol_lo, vol_hi = self._TIMESERIES_VOL_RANGES[sym]
-            vol = round(self._rng.uniform(vol_lo, vol_hi), 4)
+        # 行情时序与统一市场池保持一致，展示交易活跃的前N个交易对。
+        if not self._market_universe:
+            return
+        for item in self._market_universe[:12]:
+            base = item.price
+            op = round(base * (1 + self._rng.uniform(-0.004, 0.004)), 4)
+            cl = round(base * (1 + self._rng.uniform(-0.004, 0.004)), 4)
+            hi = round(max(op, cl) * (1 + self._rng.uniform(0.0, 0.003)), 4)
+            lo = round(min(op, cl) * (1 - self._rng.uniform(0.0, 0.003)), 4)
+            vol = round(max(item.volume_24h * self._rng.uniform(0.001, 0.02), 0.0), 4)
             self._market_history.appendleft(
-                MarketCandle(symbol=sym, ts=now_ts, open=op, high=hi, low=lo, close=cl, volume=vol)
+                MarketCandle(symbol=item.symbol, ts=now_ts, open=op, high=hi, low=lo, close=cl, volume=vol)
             )
 
     def _validate_candidate(self, candidate: StrategyCandidate) -> None:
@@ -663,32 +675,28 @@ class GovernanceEngine:
         return sum(1 for item in self._approvals if item.status == ApprovalStatus.pending)
 
     def _open_mock_position(self, cycle_actions: list[str]) -> None:
-        # (symbol, market_type, leverage, price_lo, price_hi, qty_lo, qty_hi)
-        # 价格区间：2026年4月真实市场参考；单笔保证金约200-600 USDT，不超过账户6%
-        candidates = [
-            ("BTCUSDT",  MarketType.spot,      1, 68_000, 74_000, 0.003, 0.008),
-            ("ETHUSDT",  MarketType.spot,      1,  3_200,  3_600, 0.06,  0.15),
-            ("SOLUSDT",  MarketType.perpetual, 3,    140,    160, 4.0,   10.0),
-            ("DOGEUSDT", MarketType.perpetual, 3,   0.15,   0.25, 3_000, 7_000),
-            ("AIUSDT",   MarketType.alpha,     2,    0.5,    1.5, 300,   800),
-            ("WLDUSDT",  MarketType.alpha,     2,    1.5,    3.0, 150,   400),
-        ]
-        available = [item for item in candidates if item[0] not in self._position_book]
+        if not self._market_universe:
+            return
+        available = [item for item in self._market_universe if item.symbol not in self._position_book]
         if not available:
             return
-        symbol, market_type, leverage, price_lo, price_hi, qty_lo, qty_hi = self._rng.choice(available)
-        price = round(self._rng.uniform(price_lo, price_hi), 4)
-        quantity = round(self._rng.uniform(qty_lo, qty_hi), 6)
-        margin = price * quantity / max(1, leverage)
+
+        # 交易对来自统一市场池，开仓金额按净值 2%-6% 分配，保证仓位规模在 1万U 账户下合理。
+        pick = self._rng.choice(available[:120])
+        price = max(round(pick.price, 4), 0.0001)
+        leverage = max(1, pick.leverage)
+        target_notional = self.state.equity * self._rng.uniform(0.02, 0.06)
+        quantity = round(target_notional / price, 6)
+        margin = price * quantity / leverage
         entry_fee = margin * 0.0012
-        if self.state.cash <= margin + entry_fee:
+        if quantity <= 0 or self.state.cash <= margin + entry_fee:
             return
 
         self.state.cash = round(self.state.cash - margin - entry_fee, 4)
         self.state.fees_paid = round(self.state.fees_paid + entry_fee, 4)
         position = PositionSnapshot(
-            symbol=symbol,
-            market_type=market_type,
+            symbol=pick.symbol,
+            market_type=pick.market_type,
             side=Side.buy,
             leverage=leverage,
             quantity=quantity,
@@ -698,11 +706,10 @@ class GovernanceEngine:
             take_profit=round(price * 1.03, 4),
             unrealized_pnl=0.0,
         )
-        self._position_book[symbol] = position
         self._trades.appendleft(
             TradeSnapshot(
-                symbol=symbol,
-                market_type=market_type,
+                symbol=pick.symbol,
+                market_type=pick.market_type,
                 side=Side.buy,
                 quantity=quantity,
                 price=price,
@@ -711,7 +718,8 @@ class GovernanceEngine:
                 note="AI开仓",
             )
         )
-        cycle_actions.append(f"新开仓 {symbol} {market_type.value} 数量{quantity:.4f}")
+        self._position_book[pick.symbol] = position
+        cycle_actions.append(f"新开仓 {pick.symbol} {pick.market_type.value} 数量{quantity:.6f}")
 
     def _close_mock_position(self, cycle_actions: list[str]) -> None:
         symbol = self._rng.choice(list(self._position_book.keys()))
