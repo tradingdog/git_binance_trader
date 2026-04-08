@@ -15,6 +15,9 @@ class Settings(BaseModel):
     trading_mode: str = "SIMULATION"
     initial_balance_usdt: float = 10000.0
     cycle_interval_seconds: int = 5
+    # AI推理频率控制：每隔多少个tick才触发一次真实AI推理调用
+    # 默认60 tick × 5s = 5分钟/次，相比每tick调用减少约60倍成本
+    ai_call_every_n_ticks: int = 60
     ai_model_name: str = "gemini-2.5-pro"
     ai_input_price_per_million: float = 2.0
     ai_output_price_per_million: float = 12.0
@@ -40,6 +43,7 @@ def get_settings() -> Settings:
         trading_mode=os.getenv("TRADING_MODE", "SIMULATION"),
         initial_balance_usdt=float(os.getenv("INITIAL_BALANCE_USDT", "10000")),
         cycle_interval_seconds=int(os.getenv("CYCLE_INTERVAL_SECONDS", "5")),
+        ai_call_every_n_ticks=int(os.getenv("AI_CALL_EVERY_N_TICKS", "60")),
         ai_model_name=os.getenv("AI_MODEL_NAME", "gemini-2.5-pro"),
         ai_input_price_per_million=float(os.getenv("AI_INPUT_PRICE_PER_MILLION", "2")),
         ai_output_price_per_million=float(os.getenv("AI_OUTPUT_PRICE_PER_MILLION", "12")),

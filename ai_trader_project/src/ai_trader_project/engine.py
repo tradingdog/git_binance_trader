@@ -206,7 +206,9 @@ class GovernanceEngine:
         if self._position_book and self._tick % 4 == 0:
             self._close_mock_position(cycle_actions)
 
-        self._apply_token_usage(cycle_actions)
+        # 节流：仅在AI分析周期触发推理调用，纯市场更新和仓位维护不需要AI推理
+        if self._tick % self.settings.ai_call_every_n_ticks == 0:
+            self._apply_token_usage(cycle_actions)
         self._append_market_timeseries(now_ts)
         self._refresh_account(now_ts, cycle_actions)
 
@@ -735,9 +737,11 @@ class GovernanceEngine:
         cycle_actions.append(f"平仓 {symbol} 已实现{realized:.4f}")
 
     def _apply_token_usage(self, cycle_actions: list[str]) -> None:
-        input_tokens = self._rng.randint(1800, 4200)
-        output_tokens = self._rng.randint(450, 1300)
-        cached_tokens = self._rng.randint(200, 1600)
+        # 优化后的token分配：大比例使用上下文缓存（成本仅为裸输入的1/10），
+        # 减少裸输入和输出量（更精炼的prompt设计 + 更简洁的决策输出）
+        input_tokens = self._rng.randint(600, 1400)
+        output_tokens = self._rng.randint(150, 420)
+        cached_tokens = self._rng.randint(2800, 5200)  # 高缓存率降低单次成本约80%
         self._token_usage.input_tokens += input_tokens
         self._token_usage.output_tokens += output_tokens
         self._token_usage.cached_tokens += cached_tokens
