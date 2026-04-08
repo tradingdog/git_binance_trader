@@ -183,12 +183,14 @@ class GovernanceEngine:
 
     async def _loop(self) -> None:
         while True:
+            await asyncio.sleep(self.settings.cycle_interval_seconds)
             self._tick += 1
             if self.state.status == StrategyStatus.running:
+                if self._should_refresh_market_universe():
+                    await asyncio.to_thread(self._refresh_market_universe)
                 self._simulate_cycle()
                 self._run_embedded_workflows()
                 self._enforce_hard_constraints()
-            await asyncio.sleep(self.settings.cycle_interval_seconds)
 
     async def snapshot(self) -> ControlState:
         return self.state
@@ -196,7 +198,6 @@ class GovernanceEngine:
     def _simulate_cycle(self) -> None:
         now_ts = datetime.now(timezone.utc)
         cycle_actions: list[str] = []
-        self._refresh_market_universe()
         latest_price_map = {item.symbol: item.price for item in self._market_universe}
 
         for symbol, position in list(self._position_book.items()):
@@ -381,6 +382,10 @@ class GovernanceEngine:
             self._market_universe_refresh_failed = 0
             return
         self._market_universe_refresh_failed += 1
+
+    def _should_refresh_market_universe(self) -> bool:
+        refresh_ticks = max(1, self.settings.market_universe_refresh_ticks)
+        return (not self._market_universe) or (self._tick % refresh_ticks == 0)
 
     def _append_market_timeseries(self, now_ts: datetime) -> None:
         # 行情时序与统一市场池保持一致，展示交易活跃的前N个交易对。
