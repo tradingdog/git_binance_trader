@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from statistics import median
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode
@@ -57,17 +56,17 @@ class MarketUniverseBuilder:
         "PYUSD",
     }
 
+    ALPHA_MIN_LIQUIDITY_USDT = 5_000_000.0
     ALPHA_MIN_QUOTE_VOLUME_24H_USDT = 500_000.0
-    ALPHA_MIN_TRADE_COUNT_24H = 2_000
-    ALPHA_MIN_MEDIAN_DAILY_QUOTE_VOLUME_30D_USDT = 500_000.0
     MAX_ALPHA_SYMBOLS_TO_SCAN = 40
 
     def __init__(self, timeout_seconds: float = 8.0) -> None:
         self.timeout_seconds = timeout_seconds
 
     def build(self, limit: int = 300) -> list[MarketCandidate]:
-        spot_tickers = self._get_json("https://api.binance.com/api/v3/ticker/24hr")
-        perp_tickers = self._get_json("https://fapi.binance.com/fapi/v1/ticker/24hr")
+        # 为避免低内存机器 OOM，统一使用轻量 price 端点构建主市场池。
+        spot_tickers = self._get_json("https://api.binance.com/api/v3/ticker/price")
+        perp_tickers = self._get_json("https://fapi.binance.com/fapi/v1/ticker/price")
         spot_info = self._get_json("https://api.binance.com/api/v3/exchangeInfo")
         perp_info = self._get_json("https://fapi.binance.com/fapi/v1/exchangeInfo")
 
@@ -82,7 +81,7 @@ class MarketUniverseBuilder:
         rows.extend(self._build_perpetual_candidates(perp_tickers, perp_trading))
         rows.extend(self._build_alpha_candidates())
 
-        rows.sort(key=lambda r: r.volume_24h, reverse=True)
+        rows.sort(key=lambda r: (1 if r.market_type == MarketType.alpha else 0, r.symbol), reverse=True)
         if limit > 0:
             rows = rows[:limit]
         return rows
@@ -97,7 +96,7 @@ class MarketUniverseBuilder:
                 continue
             if self._should_exclude_symbol(symbol):
                 continue
-            price = self._as_float(item.get("lastPrice"))
+            price = self._as_float(item.get("lastPrice") or item.get("price"))
             if price <= 0:
                 continue
             out.append(
@@ -106,8 +105,8 @@ class MarketUniverseBuilder:
                     market_type=MarketType.spot,
                     leverage=1,
                     price=price,
-                    volume_24h=self._as_float(item.get("quoteVolume")),
-                    change_pct_24h=self._as_float(item.get("priceChangePercent")),
+                    volume_24h=0.0,
+                    change_pct_24h=0.0,
                 )
             )
         return out
@@ -122,7 +121,7 @@ class MarketUniverseBuilder:
                 continue
             if self._should_exclude_symbol(symbol):
                 continue
-            price = self._as_float(item.get("lastPrice"))
+            price = self._as_float(item.get("lastPrice") or item.get("price"))
             if price <= 0:
                 continue
             out.append(
@@ -131,8 +130,8 @@ class MarketUniverseBuilder:
                     market_type=MarketType.perpetual,
                     leverage=3,
                     price=price,
-                    volume_24h=self._as_float(item.get("quoteVolume")),
-                    change_pct_24h=self._as_float(item.get("priceChangePercent")),
+                    volume_24h=0.0,
+                    change_pct_24h=0.0,
                 )
             )
         return out
@@ -155,7 +154,7 @@ class MarketUniverseBuilder:
                 token_by_alpha_id[alpha_id] = item
 
         out: list[MarketCandidate] = []
-        pending: list[tuple[float, str, str]] = []
+        pending: list[tuple[float, str, str, float, float, float]] = []
         symbols = info_payload.get("data", {}).get("symbols", []) or []
         for symbol_info in symbols:
             if symbol_info.get("status") != "TRADING":
@@ -173,30 +172,20 @@ class MarketUniverseBuilder:
             if not actual_symbol or not display_symbol:
                 continue
             liquidity = self._as_float(token_item.get("liquidity"))
-            pending.append((liquidity, actual_symbol, display_symbol))
+            price = self._as_float(token_item.get("price"))
+            change = self._as_float(token_item.get("percentChange24h"))
+            volume = self._as_float(token_item.get("volume24h"))
+            if liquidity < self.ALPHA_MIN_LIQUIDITY_USDT:
+                continue
+            if volume < self.ALPHA_MIN_QUOTE_VOLUME_24H_USDT:
+                continue
+            if abs(change) < 10.0:
+                continue
+            pending.append((liquidity, actual_symbol, display_symbol, price, change, volume))
 
         pending.sort(key=lambda row: row[0], reverse=True)
-        for _, actual_symbol, display_symbol in pending[: self.MAX_ALPHA_SYMBOLS_TO_SCAN]:
-
-            ticker_payload = self._get_json(
-                "https://www.binance.com/bapi/defi/v1/public/alpha-trade/ticker",
-                {"symbol": actual_symbol},
-            )
-            klines_payload = self._get_json(
-                "https://www.binance.com/bapi/defi/v1/public/alpha-trade/klines",
-                {"symbol": actual_symbol, "interval": "1d", "limit": 30},
-            )
-            if not self._passes_alpha_market_activity_filter(ticker_payload, klines_payload):
-                continue
-
-            ticker = ticker_payload.get("data", {}) if isinstance(ticker_payload, dict) else {}
-            price = self._as_float(ticker.get("lastPrice"))
-            change = self._as_float(ticker.get("priceChangePercent"))
-            volume = self._as_float(ticker.get("quoteVolume"))
+        for _, _, display_symbol, price, change, volume in pending[: self.MAX_ALPHA_SYMBOLS_TO_SCAN]:
             if price <= 0:
-                continue
-            # 与人类版本一致：alpha 只做 24h 涨跌幅 >= +10% 或 <= -10%。
-            if abs(change) < 10.0:
                 continue
             out.append(
                 MarketCandidate(
@@ -209,31 +198,6 @@ class MarketUniverseBuilder:
                 )
             )
         return out
-
-    def _passes_alpha_market_activity_filter(self, ticker_payload: Any, klines_payload: Any) -> bool:
-        if not isinstance(ticker_payload, dict) or ticker_payload.get("code") != "000000":
-            return False
-        if not isinstance(klines_payload, dict) or klines_payload.get("code") != "000000":
-            return False
-        ticker = ticker_payload.get("data", {}) or {}
-        klines = klines_payload.get("data", []) or []
-
-        quote_volume_24h = self._as_float(ticker.get("quoteVolume"))
-        trade_count_24h = int(self._as_float(ticker.get("count")))
-
-        daily_quote_volumes: list[float] = []
-        for row in klines:
-            if not isinstance(row, list) or len(row) < 8:
-                continue
-            daily_quote_volumes.append(self._as_float(row[7]))
-        if not daily_quote_volumes:
-            return False
-
-        return (
-            quote_volume_24h >= self.ALPHA_MIN_QUOTE_VOLUME_24H_USDT
-            and trade_count_24h >= self.ALPHA_MIN_TRADE_COUNT_24H
-            and median(daily_quote_volumes) >= self.ALPHA_MIN_MEDIAN_DAILY_QUOTE_VOLUME_30D_USDT
-        )
 
     @staticmethod
     def _extract_spot_trading_symbols(exchange_info_payload: dict[str, Any]) -> set[str]:
@@ -283,7 +247,7 @@ class MarketUniverseBuilder:
         req = Request(url, headers={"User-Agent": "git-binance-trader-ai/1.0"})
         try:
             with urlopen(req, timeout=self.timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8", errors="ignore"))
+                return json.loads(response.read())
         except (URLError, TimeoutError, OSError, ValueError):
             return None
 
