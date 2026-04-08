@@ -184,13 +184,17 @@ class GovernanceEngine:
     async def _loop(self) -> None:
         while True:
             await asyncio.sleep(self.settings.cycle_interval_seconds)
-            self._tick += 1
-            if self.state.status == StrategyStatus.running:
-                if self._should_refresh_market_universe():
-                    await asyncio.to_thread(self._refresh_market_universe)
-                self._simulate_cycle()
-                self._run_embedded_workflows()
-                self._enforce_hard_constraints()
+            try:
+                self._tick += 1
+                if self.state.status == StrategyStatus.running:
+                    if self._should_refresh_market_universe():
+                        await asyncio.to_thread(self._refresh_market_universe)
+                    self._simulate_cycle()
+                    self._run_embedded_workflows()
+                    self._enforce_hard_constraints()
+            except Exception as exc:
+                self._alarms.appendleft(f"主循环异常: {str(exc)[:120]}")
+                self._audit("runtime", "engine", "主循环异常", {"error": str(exc)})
 
     async def snapshot(self) -> ControlState:
         return self.state
