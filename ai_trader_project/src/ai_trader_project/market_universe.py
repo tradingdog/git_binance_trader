@@ -59,6 +59,8 @@ class MarketUniverseBuilder:
 
     ALPHA_MIN_LIQUIDITY_USDT = 5_000_000.0
     ALPHA_MIN_QUOTE_VOLUME_24H_USDT = 500_000.0
+    ALPHA_MIN_TRADE_COUNT_24H = 2_000
+    ALPHA_MIN_MEDIAN_DAILY_QUOTE_VOLUME_30D_USDT = 500_000.0
     MAX_ALPHA_SYMBOLS_TO_SCAN = 40
     SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]{2,30}$")
 
@@ -203,7 +205,7 @@ class MarketUniverseBuilder:
                 token_by_alpha_id[alpha_id] = item
 
         out: list[MarketCandidate] = []
-        pending: list[tuple[float, str, str, float, float, float]] = []
+        pending: list[tuple[float, str, str]] = []
         symbols = info_payload.get("data", {}).get("symbols", []) or []
         for symbol_info in symbols:
             if symbol_info.get("status") != "TRADING":
@@ -225,20 +227,30 @@ class MarketUniverseBuilder:
             if not self.SYMBOL_PATTERN.fullmatch(display_symbol):
                 continue
             liquidity = self._as_float(token_item.get("liquidity"))
-            price = self._as_float(token_item.get("price"))
-            change = self._as_float(token_item.get("percentChange24h"))
-            volume = self._as_float(token_item.get("volume24h"))
             if liquidity < self.ALPHA_MIN_LIQUIDITY_USDT:
                 continue
-            if volume < self.ALPHA_MIN_QUOTE_VOLUME_24H_USDT:
-                continue
-            if abs(change) < 10.0:
-                continue
-            pending.append((liquidity, actual_symbol, display_symbol, price, change, volume))
+            pending.append((liquidity, actual_symbol, display_symbol))
 
         pending.sort(key=lambda row: row[0], reverse=True)
-        for _, _, display_symbol, price, change, volume in pending[: self.MAX_ALPHA_SYMBOLS_TO_SCAN]:
+        for _, actual_symbol, display_symbol in pending[: self.MAX_ALPHA_SYMBOLS_TO_SCAN]:
+            ticker_payload = self._get_json(
+                "https://www.binance.com/bapi/defi/v1/public/alpha-trade/ticker",
+                {"symbol": actual_symbol},
+            )
+            klines_payload = self._get_json(
+                "https://www.binance.com/bapi/defi/v1/public/alpha-trade/klines",
+                {"symbol": actual_symbol, "interval": "1d", "limit": 30},
+            )
+            if not self._passes_alpha_market_activity_filter(ticker_payload, klines_payload):
+                continue
+
+            ticker = ticker_payload.get("data", {}) if isinstance(ticker_payload, dict) else {}
+            price = self._as_float(ticker.get("lastPrice"))
+            change = self._as_float(ticker.get("priceChangePercent"))
+            volume = self._as_float(ticker.get("quoteVolume"))
             if price <= 0:
+                continue
+            if abs(change) < 10.0:
                 continue
             out.append(
                 MarketCandidate(
@@ -251,6 +263,32 @@ class MarketUniverseBuilder:
                 )
             )
         return out
+
+    def _passes_alpha_market_activity_filter(self, ticker_payload: Any, klines_payload: Any) -> bool:
+        if not isinstance(ticker_payload, dict) or ticker_payload.get("code") != "000000":
+            return False
+        if not isinstance(klines_payload, dict) or klines_payload.get("code") != "000000":
+            return False
+        ticker = ticker_payload.get("data", {}) or {}
+        klines = klines_payload.get("data", []) or []
+
+        quote_volume_24h = self._as_float(ticker.get("quoteVolume"))
+        trade_count_24h = int(self._as_float(ticker.get("count")))
+        daily_quote_volumes: list[float] = []
+        for row in klines:
+            if not isinstance(row, list) or len(row) < 8:
+                continue
+            daily_quote_volumes.append(self._as_float(row[7]))
+        if not daily_quote_volumes:
+            return False
+
+        ordered = sorted(daily_quote_volumes)
+        median_daily_quote_volume = ordered[len(ordered) // 2]
+        return (
+            quote_volume_24h >= self.ALPHA_MIN_QUOTE_VOLUME_24H_USDT
+            and trade_count_24h >= self.ALPHA_MIN_TRADE_COUNT_24H
+            and median_daily_quote_volume >= self.ALPHA_MIN_MEDIAN_DAILY_QUOTE_VOLUME_30D_USDT
+        )
 
     @staticmethod
     def _extract_spot_trading_symbols(exchange_info_payload: dict[str, Any]) -> set[str]:
