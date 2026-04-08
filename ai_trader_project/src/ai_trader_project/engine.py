@@ -358,15 +358,29 @@ class GovernanceEngine:
             status="pending_validation",
         )
 
+    # 各交易对真实参考价格区间（2026年4月）与成交量区间（以基础币计）
+    _TIMESERIES_PRICE_RANGES: dict[str, tuple[float, float]] = {
+        "BTCUSDT":  (68_000, 74_000),
+        "ETHUSDT":  ( 3_200,  3_600),
+        "SOLUSDT":  (   140,    160),
+        "DOGEUSDT": (  0.15,   0.25),
+    }
+    _TIMESERIES_VOL_RANGES: dict[str, tuple[float, float]] = {
+        "BTCUSDT":  (     50,      300),
+        "ETHUSDT":  (    500,    3_000),
+        "SOLUSDT":  (  5_000,   50_000),
+        "DOGEUSDT": (500_000, 5_000_000),
+    }
+
     def _append_market_timeseries(self, now_ts: datetime) -> None:
-        symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"]
-        for sym in symbols:
-            base = self._rng.uniform(10, 120)
+        for sym, (price_lo, price_hi) in self._TIMESERIES_PRICE_RANGES.items():
+            base = self._rng.uniform(price_lo, price_hi)
             op = round(base, 4)
             cl = round(base * (1 + self._rng.uniform(-0.01, 0.01)), 4)
             hi = round(max(op, cl) * (1 + self._rng.uniform(0.0, 0.005)), 4)
             lo = round(min(op, cl) * (1 - self._rng.uniform(0.0, 0.005)), 4)
-            vol = round(self._rng.uniform(1200, 8800), 4)
+            vol_lo, vol_hi = self._TIMESERIES_VOL_RANGES[sym]
+            vol = round(self._rng.uniform(vol_lo, vol_hi), 4)
             self._market_history.appendleft(
                 MarketCandle(symbol=sym, ts=now_ts, open=op, high=hi, low=lo, close=cl, volume=vol)
             )
@@ -649,20 +663,22 @@ class GovernanceEngine:
         return sum(1 for item in self._approvals if item.status == ApprovalStatus.pending)
 
     def _open_mock_position(self, cycle_actions: list[str]) -> None:
+        # (symbol, market_type, leverage, price_lo, price_hi, qty_lo, qty_hi)
+        # 价格区间：2026年4月真实市场参考；单笔保证金约200-600 USDT，不超过账户6%
         candidates = [
-            ("BTCUSDT", MarketType.spot, 1),
-            ("ETHUSDT", MarketType.spot, 1),
-            ("SOLUSDT", MarketType.perpetual, 3),
-            ("DOGEUSDT", MarketType.perpetual, 3),
-            ("AIUSDT", MarketType.alpha, 2),
-            ("WLDUSDT", MarketType.alpha, 2),
+            ("BTCUSDT",  MarketType.spot,      1, 68_000, 74_000, 0.003, 0.008),
+            ("ETHUSDT",  MarketType.spot,      1,  3_200,  3_600, 0.06,  0.15),
+            ("SOLUSDT",  MarketType.perpetual, 3,    140,    160, 4.0,   10.0),
+            ("DOGEUSDT", MarketType.perpetual, 3,   0.15,   0.25, 3_000, 7_000),
+            ("AIUSDT",   MarketType.alpha,     2,    0.5,    1.5, 300,   800),
+            ("WLDUSDT",  MarketType.alpha,     2,    1.5,    3.0, 150,   400),
         ]
         available = [item for item in candidates if item[0] not in self._position_book]
         if not available:
             return
-        symbol, market_type, leverage = self._rng.choice(available)
-        price = round(self._rng.uniform(8, 160), 4)
-        quantity = round(self._rng.uniform(0.4, 1.8), 6)
+        symbol, market_type, leverage, price_lo, price_hi, qty_lo, qty_hi = self._rng.choice(available)
+        price = round(self._rng.uniform(price_lo, price_hi), 4)
+        quantity = round(self._rng.uniform(qty_lo, qty_hi), 6)
         margin = price * quantity / max(1, leverage)
         entry_fee = margin * 0.0012
         if self.state.cash <= margin + entry_fee:
