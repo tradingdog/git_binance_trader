@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import URLError
@@ -59,6 +60,7 @@ class MarketUniverseBuilder:
     ALPHA_MIN_LIQUIDITY_USDT = 5_000_000.0
     ALPHA_MIN_QUOTE_VOLUME_24H_USDT = 500_000.0
     MAX_ALPHA_SYMBOLS_TO_SCAN = 40
+    SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]{2,30}$")
 
     def __init__(self, timeout_seconds: float = 8.0) -> None:
         self.timeout_seconds = timeout_seconds
@@ -137,6 +139,8 @@ class MarketUniverseBuilder:
                 continue
             if not symbol.endswith("USDT"):
                 continue
+            if not self.SYMBOL_PATTERN.fullmatch(symbol):
+                continue
             if self._should_exclude_symbol(symbol):
                 continue
             price = self._as_float(item.get("lastPrice") or item.get("price"))
@@ -161,6 +165,8 @@ class MarketUniverseBuilder:
             if symbol not in trading_symbols:
                 continue
             if not symbol.endswith("USDT"):
+                continue
+            if not self.SYMBOL_PATTERN.fullmatch(symbol):
                 continue
             if self._should_exclude_symbol(symbol):
                 continue
@@ -213,6 +219,10 @@ class MarketUniverseBuilder:
             actual_symbol = str(symbol_info.get("symbol", "")).upper()
             display_symbol = str(token_item.get("symbol", "")).upper()
             if not actual_symbol or not display_symbol:
+                continue
+            if not self.SYMBOL_PATTERN.fullmatch(actual_symbol):
+                continue
+            if not self.SYMBOL_PATTERN.fullmatch(display_symbol):
                 continue
             liquidity = self._as_float(token_item.get("liquidity"))
             price = self._as_float(token_item.get("price"))
