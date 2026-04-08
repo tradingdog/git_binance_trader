@@ -1,5 +1,10 @@
 # AI项目更新日志
 
+## v0.1.7 - 2026-04-08
+- 新增编排选型记录文档：`ai_trader_project/docs/ORCHESTRATION_DECISION.md`，明确当前优先 Prefect，并记录未选 Temporal 的原因与迁移路径。
+- 清单进一步回填：完成运行节奏、端到端闭环多数步骤、滚动窗口回测、极端压力测试、密钥隔离实践、可重复性等条目勾选。
+- 持续保留未完成项为明确后续边界：改码代理 PR 自动化、真实 Temporal/Prefect 落地、双模型反证、行情时序真实数据接入、P3 持续优化项。
+
 ## v0.1.6 - 2026-04-08
 - 新增模型通道探针接口：`/api/governance/model-probe`，输出稳定/实验模型通道、区域主备选择、回退原因与 IAM/配额/账单/区域可用性探针结果。
 - 新增失败恢复上下文连续性计数，写入 `reliability.context_continuity_count` 并记录审计事件。
