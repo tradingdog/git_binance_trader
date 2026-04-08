@@ -49,7 +49,7 @@ def render_dashboard() -> str:
     .card { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--panel-soft); }
     .card b { display: block; font-size: 12px; color: var(--muted); }
     .card span { display: block; margin-top: 6px; font-family: var(--mono); font-size: 24px; }
-    .btns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .btns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
     .btn { border: 1px solid var(--line); border-radius: 10px; padding: 11px; background: #16283d; color: var(--text); font-weight: 700; cursor: pointer; }
     .btn.warn { border-color: #856f1c; background: #30290f; color: #ffd86d; }
     .btn.danger { border-color: #8a3c3c; background: #321919; color: #ff9d9d; }
@@ -68,6 +68,10 @@ def render_dashboard() -> str:
     summary { cursor: pointer; font-weight: 700; color: #cfe1f7; }
     .detail-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
     .detail-steps { margin: 8px 0 0; padding-left: 16px; color: #c4d6ee; }
+    .kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 12px; }
+    .kv b { color: var(--muted); font-weight: 600; }
+    .kv span { font-family: var(--mono); }
+    .tiny { font-size: 11px; color: var(--muted); }
     a { color: var(--accent); }
     .footer { color: var(--muted); font-size: 12px; }
     @media (max-width: 1040px) {
@@ -117,6 +121,8 @@ def render_dashboard() -> str:
           <button class='btn' data-act='resume'>恢复自动交易</button>
           <button class='btn danger' data-act='close'>全面平仓并暂停</button>
           <button class='btn danger' data-act='halt'>全面停止</button>
+          <button class='btn danger' data-act='freeze'>全局停止自治</button>
+          <button class='btn warn' data-act='rollback'>一键回滚冠军</button>
         </div>
         <div id='action-result' class='status'>等待操作</div>
       </div>
@@ -126,6 +132,32 @@ def render_dashboard() -> str:
         <textarea id='cmd' placeholder='输入你对 AI 的自然语言指令'></textarea>
         <button id='send' class='btn' style='margin-top:8px'>提交指令</button>
         <div id='cmd-result' class='status'>未提交</div>
+      </div>
+
+      <div class='panel span-6'>
+        <h3 style='margin:0 0 8px'>自治总控与目标红线</h3>
+        <div class='kv'>
+          <b>自治等级</b><span id='g-level'>--</span>
+          <b>结构性改动</b><span id='g-structural'>--</span>
+          <b>夜间自治</b><span id='g-night'>--</span>
+          <b>日收益目标</b><span id='g-target'>--</span>
+          <b>费用上限</b><span id='g-fee-limit'>--</span>
+          <b>全程回撤上限</b><span id='g-max-dd'>--</span>
+          <b>当日回撤上限</b><span id='g-max-dd-day'>--</span>
+          <b>单笔亏损上限</b><span id='g-max-loss'>--</span>
+        </div>
+      </div>
+
+      <div class='panel span-6'>
+        <h3 style='margin:0 0 8px'>灰度发布中心</h3>
+        <div class='kv'>
+          <b>冠军版本</b><span id='r-champion'>--</span>
+          <b>挑战者版本</b><span id='r-challenger'>--</span>
+          <b>灰度比例</b><span id='r-ratio'>--</span>
+          <b>状态</b><span id='r-status'>--</span>
+          <b>最近发布</b><span id='r-last-release'>--</span>
+          <b>最近回滚</b><span id='r-last-rollback'>--</span>
+        </div>
       </div>
 
       <div class='panel span-6'>
@@ -158,6 +190,26 @@ def render_dashboard() -> str:
       </div>
 
       <div class='panel span-6'>
+        <h3 style='margin:0 0 8px'>审批队列（高风险必须人工审批）</h3>
+        <div class='table-wrap'>
+          <table>
+            <thead><tr><th>ID</th><th>动作</th><th>原因</th><th>发起方</th><th>状态</th><th>操作</th></tr></thead>
+            <tbody id='approval-body'><tr><td colspan='6'>暂无审批</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class='panel span-12'>
+        <h3 style='margin:0 0 8px'>实验与回测中心（候选策略）</h3>
+        <div class='table-wrap'>
+          <table>
+            <thead><tr><th>ID</th><th>候选名</th><th>日收益%</th><th>Sharpe</th><th>MDD%</th><th>费率%</th><th>J评分</th><th>硬约束</th><th>状态</th><th>风险说明</th></tr></thead>
+            <tbody id='candidate-body'><tr><td colspan='10'>暂无候选策略</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class='panel span-6'>
         <h3 style='margin:0 0 8px'>运行日志</h3>
         <div id='runtime-log' class='log-box'>加载中...</div>
       </div>
@@ -170,6 +222,16 @@ def render_dashboard() -> str:
       <div class='panel span-6'>
         <h3 style='margin:0 0 8px'>人类命令历史</h3>
         <div id='cmd-log' class='log-box'>加载中...</div>
+      </div>
+
+      <div class='panel span-6'>
+        <h3 style='margin:0 0 8px'>回滚与审计中心</h3>
+        <div id='audit-log' class='log-box'>加载中...</div>
+      </div>
+
+      <div class='panel span-6'>
+        <h3 style='margin:0 0 8px'>日报/小时报告</h3>
+        <div id='report-log' class='log-box'>加载中...</div>
       </div>
 
       <div class='panel span-12 footer'>
@@ -216,12 +278,49 @@ def render_dashboard() -> str:
       }).join('');
     }
 
+    function renderApprovals(rows){
+      const body = document.getElementById('approval-body');
+      if(!rows||!rows.length){body.innerHTML="<tr><td colspan='6'>暂无审批</td></tr>"; return;}
+      body.innerHTML = rows.map(r=>{
+        const buttons = r.status==='pending'
+          ? "<button class='btn' style='padding:6px 8px' onclick=\"decideApproval('"+r.id+"','approve')\">通过</button> <button class='btn danger' style='padding:6px 8px' onclick=\"decideApproval('"+r.id+"','reject')\">拒绝</button>"
+          : "-";
+        return "<tr><td>"+r.id+"</td><td>"+r.action+"</td><td>"+r.reason+"</td><td>"+r.requested_by+"</td><td>"+r.status+"</td><td>"+buttons+"</td></tr>";
+      }).join('');
+    }
+
+    function renderCandidates(rows){
+      const body = document.getElementById('candidate-body');
+      if(!rows||!rows.length){body.innerHTML="<tr><td colspan='10'>暂无候选策略</td></tr>"; return;}
+      body.innerHTML = rows.map(r=>"<tr><td>"+r.id+"</td><td>"+r.name+"</td><td class='num'>"+n(r.day_return_pct,4)+"</td><td class='num'>"+n(r.sharpe,4)+"</td><td class='num'>"+n(r.mdd_pct,4)+"</td><td class='num'>"+n(r.fee_ratio_pct,4)+"</td><td class='num'>"+n(r.score_j,6)+"</td><td>"+(r.hard_constraint_passed?'通过':'拒绝')+"</td><td>"+r.status+"</td><td>"+r.risk_note+"</td></tr>").join('');
+    }
+
+    function renderAudit(rows){
+      if(!rows||!rows.length){return '暂无审计事件';}
+      return rows.map(r=>"["+ts(r.created_at)+"] "+r.category+" | "+r.actor+" | "+r.message+" | "+JSON.stringify(r.detail||{})).join('\n');
+    }
+
+    function renderReports(payload){
+      const hourly = payload?.hourly || [];
+      const daily = payload?.daily || [];
+      const lines = [];
+      lines.push('=== 小时报告 ===');
+      lines.push(...hourly.slice(0,20));
+      lines.push('');
+      lines.push('=== 日报告 ===');
+      lines.push(...daily.slice(0,10));
+      return lines.join('\n') || '暂无报告';
+    }
+
     async function load(){
       const r = await fetch('/api/ai/governance',{cache:'no-store'});
       if(!r.ok) throw new Error('load failed');
       const p = await r.json();
       const s = p.system || {};
       const u = p.ai_usage || {};
+      const g = p.governance_config || {};
+      const risk = g.risk || {};
+      const release = p.release_state || {};
 
       document.getElementById('k-total-tokens').textContent = n(u.total_tokens,0);
       document.getElementById('k-total-cost').textContent = '$'+n(u.total_cost_usd,4);
@@ -242,14 +341,34 @@ def render_dashboard() -> str:
       document.getElementById('m-status').textContent = s.status || '--';
       document.getElementById('status').textContent = '状态: '+(s.status||'--')+' | '+(s.ai_message||'--');
 
+      document.getElementById('g-level').textContent = g.autonomy_level || '--';
+      document.getElementById('g-structural').textContent = String(g.allow_structural_changes);
+      document.getElementById('g-night').textContent = String(g.allow_night_autonomy);
+      document.getElementById('g-target').textContent = n(g.objective_daily_return_pct,2)+'%';
+      document.getElementById('g-fee-limit').textContent = n(g.max_fee_ratio_pct,2)+'%';
+      document.getElementById('g-max-dd').textContent = n(risk.max_drawdown_pct,2)+'%';
+      document.getElementById('g-max-dd-day').textContent = n(risk.max_daily_drawdown_pct,2)+'%';
+      document.getElementById('g-max-loss').textContent = n(risk.max_trade_loss_pct,2)+'%';
+
+      document.getElementById('r-champion').textContent = release.champion_version || '--';
+      document.getElementById('r-challenger').textContent = release.challenger_version || '--';
+      document.getElementById('r-ratio').textContent = n(release.gray_ratio_pct,2)+'%';
+      document.getElementById('r-status').textContent = release.status || '--';
+      document.getElementById('r-last-release').textContent = ts(release.last_release_at);
+      document.getElementById('r-last-rollback').textContent = ts(release.last_rollback_at);
+
       renderPositions(p.positions || []);
       renderTrades(p.trades || []);
       renderTasks(p.ai_tasks || []);
+      renderApprovals(p.approvals || []);
+      renderCandidates(p.candidates || []);
 
       const runtimeLogs = (p.runtime_logs || []).join('\n');
       document.getElementById('runtime-log').textContent = runtimeLogs || '暂无运行日志';
       document.getElementById('ai-log').textContent = renderLogRows(p.memory || [], 'message');
       document.getElementById('cmd-log').textContent = renderLogRows(p.commands || [], 'command');
+      document.getElementById('audit-log').textContent = renderAudit(p.audit_events || []);
+      document.getElementById('report-log').textContent = renderReports(p.reports || {});
 
       const hu = p.human_version?.dashboard_url || '#';
       const au = p.ai_version?.dashboard_url || '#';
@@ -260,10 +379,24 @@ def render_dashboard() -> str:
     }
 
     async function act(name){
-      const mp = {pause:'/api/actions/pause',resume:'/api/actions/resume',close:'/api/actions/emergency-close',halt:'/api/actions/halt'};
-      const r = await fetch(mp[name],{method:'POST'});
+      const mp = {
+        pause:'/api/actions/pause',
+        resume:'/api/actions/resume',
+        close:'/api/actions/emergency-close',
+        halt:'/api/actions/halt',
+        freeze:'/api/actions/freeze-autonomy',
+        rollback:'/api/actions/rollback'
+      };
+      const r = await fetch(mp[name],{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operator:'human',role:'human_root'})});
       const d = await r.json();
       document.getElementById('action-result').textContent = (d.message||'完成')+' (状态: '+(d.status||'--')+')';
+      await load();
+    }
+
+    async function decideApproval(id, decision){
+      const r = await fetch('/api/governance/approvals/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operator:'human',role:'human_root',decision})});
+      const d = await r.json();
+      document.getElementById('action-result').textContent = '审批结果: '+(d.status||'--');
       await load();
     }
 

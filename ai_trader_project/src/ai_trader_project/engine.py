@@ -8,14 +8,27 @@ from datetime import datetime, timezone
 from .config import Settings
 from .memory import MemoryStore
 from .models import (
+    ActionRequest,
+    ApprovalDecisionRequest,
+    ApprovalItem,
+    ApprovalStatus,
+    AuditEvent,
+    AutonomyLevel,
+    ConfigPatchRequest,
     ControlState,
+    GovernanceConfig,
     MarketType,
     PositionSnapshot,
+    ReleaseState,
+    RiskConstraints,
     Side,
+    StrategyCandidate,
     StrategyStatus,
     TaskDetail,
+    TaskStatus,
     TokenUsageSnapshot,
     TradeSnapshot,
+    UserRole,
 )
 
 
@@ -28,9 +41,68 @@ class GovernanceEngine:
         self._trades: deque[TradeSnapshot] = deque(maxlen=800)
         self._runtime_logs: deque[str] = deque(maxlen=1500)
         self._tasks: deque[TaskDetail] = deque(maxlen=240)
+        self._approvals: deque[ApprovalItem] = deque(maxlen=300)
+        self._candidates: deque[StrategyCandidate] = deque(maxlen=260)
+        self._audit_events: deque[AuditEvent] = deque(maxlen=1000)
+        self._snapshots: deque[dict[str, object]] = deque(maxlen=100)
+        self._reports_hourly: deque[str] = deque(maxlen=400)
+        self._reports_daily: deque[str] = deque(maxlen=200)
         self._token_usage = TokenUsageSnapshot(model_name=settings.ai_model_name)
+        self._governance_config = GovernanceConfig(
+            risk=RiskConstraints(
+                max_drawdown_pct=15.0,
+                max_daily_drawdown_pct=5.0,
+                max_trade_loss_pct=1.0,
+                simulation_only=True,
+            )
+        )
+        self._release_state = ReleaseState()
         self._peak_equity = settings.initial_balance_usdt
         self._start_of_day_equity = settings.initial_balance_usdt
+        self._workflow_status: dict[str, dict[str, object]] = {
+            "monitor_workflow": {"retry": 0, "last": None, "status": "idle"},
+            "research_workflow": {"retry": 0, "last": None, "status": "idle"},
+            "validate_workflow": {"retry": 0, "last": None, "status": "idle"},
+            "release_workflow": {"retry": 0, "last": None, "status": "idle"},
+            "rollback_workflow": {"retry": 0, "last": None, "status": "idle"},
+        }
+        self._command_whitelist = (
+            "test",
+            "backtest",
+            "build",
+            "deploy",
+            "pause",
+            "resume",
+            "rollback",
+            "report",
+            "optimize",
+            "analyze",
+            "测试",
+            "回测",
+            "部署",
+            "回滚",
+            "优化",
+            "分析",
+            "暂停",
+            "恢复",
+        )
+        self._role_permissions: dict[UserRole, set[str]] = {
+            UserRole.human_root: {
+                "pause",
+                "resume",
+                "emergency_close",
+                "halt",
+                "rollback",
+                "freeze_autonomy",
+                "approve",
+                "update_config",
+                "read_all",
+            },
+            UserRole.researcher_ai: {"read_all", "research", "submit_candidate"},
+            UserRole.validator_ai: {"read_all", "validate", "risk_check"},
+            UserRole.releaser_ai: {"read_all", "release", "rollback"},
+            UserRole.viewer: {"read_all"},
+        }
         self.state = ControlState(
             equity=settings.initial_balance_usdt,
             cash=settings.initial_balance_usdt,
@@ -67,6 +139,8 @@ class GovernanceEngine:
             self._tick += 1
             if self.state.status == StrategyStatus.running:
                 self._simulate_cycle()
+                self._run_embedded_workflows()
+                self._enforce_hard_constraints()
             await asyncio.sleep(self.settings.cycle_interval_seconds)
 
     async def snapshot(self) -> ControlState:
@@ -92,6 +166,242 @@ class GovernanceEngine:
 
         self._apply_token_usage(cycle_actions)
         self._refresh_account(now_ts, cycle_actions)
+
+    def _run_embedded_workflows(self) -> None:
+        self._update_workflow("monitor_workflow", "running")
+        self._create_task(
+            title="监控代理：监控偏移与风险",
+            summary="已完成净值、回撤、手续费和任务队列监控",
+            steps=[
+                "读取账户快照与风控阈值",
+                "检查收益与回撤偏离",
+                "检查手续费占比与换手率",
+            ],
+        )
+        self._update_workflow("monitor_workflow", "completed")
+
+        if self._tick % 6 == 0:
+            self._update_workflow("research_workflow", "running")
+            candidate = self._generate_candidate()
+            self._candidates.appendleft(candidate)
+            self._create_task(
+                title="研究代理：生成候选策略",
+                summary=f"已生成候选 {candidate.name}，评分 {candidate.score_j:.4f}",
+                steps=[
+                    "读取近期交易、日志、参数历史",
+                    "识别收益拖累因子",
+                    "形成候选参数改动包",
+                ],
+            )
+            self._audit("research", "researcher_ai", "生成候选策略", {"candidate_id": candidate.id})
+            self._update_workflow("research_workflow", "completed")
+
+        if self._candidates and self._tick % 8 == 0:
+            self._update_workflow("validate_workflow", "running")
+            top = self._candidates[0]
+            self._validate_candidate(top)
+            self._create_task(
+                title="验证代理：回测与风控审查",
+                summary=f"候选 {top.name} 验证状态 {top.status}",
+                steps=[
+                    "执行历史回测与滚动窗口回测",
+                    "执行压力测试与硬红线检查",
+                    "输出统一评分与风险结论",
+                ],
+            )
+            self._update_workflow("validate_workflow", "completed")
+
+        if self._candidates and self._tick % 10 == 0:
+            self._update_workflow("release_workflow", "running")
+            self._release_candidate(self._candidates[0])
+            self._update_workflow("release_workflow", "completed")
+
+        if self._tick % 12 == 0:
+            self._write_periodic_reports()
+
+    def _update_workflow(self, name: str, status: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        item = self._workflow_status.get(name)
+        if item is None:
+            return
+        item["status"] = status
+        item["last"] = now
+
+    def _generate_candidate(self) -> StrategyCandidate:
+        day_return = self._rng.uniform(-0.8, 2.2)
+        sharpe = self._rng.uniform(0.1, 2.6)
+        mdd = self._rng.uniform(1.0, 16.5)
+        fee_ratio = self._rng.uniform(8, 48)
+        turnover = self._rng.uniform(0.1, 1.5)
+        w = self._governance_config.objective_weights
+        score = (
+            w.w1_day_return * day_return
+            + w.w2_sharpe * sharpe
+            - w.w3_mdd * mdd
+            - w.w4_fee_ratio * fee_ratio / 100
+            - w.w5_turnover_penalty * turnover
+        )
+        hard_pass = (
+            mdd <= self._governance_config.risk.max_drawdown_pct
+            and fee_ratio <= self._governance_config.max_fee_ratio_pct
+        )
+        risk_note = "通过" if hard_pass else "未通过硬约束"
+        return StrategyCandidate(
+            id=f"cand-{self._tick:06d}",
+            created_at=datetime.now(timezone.utc),
+            name=f"challenge-{self._tick:06d}",
+            day_return_pct=round(day_return, 4),
+            sharpe=round(sharpe, 4),
+            mdd_pct=round(mdd, 4),
+            fee_ratio_pct=round(fee_ratio, 4),
+            turnover_penalty=round(turnover, 4),
+            score_j=round(score, 6),
+            hard_constraint_passed=hard_pass,
+            risk_note=risk_note,
+            status="pending_validation",
+        )
+
+    def _validate_candidate(self, candidate: StrategyCandidate) -> None:
+        if not candidate.hard_constraint_passed:
+            candidate.status = "rejected"
+            self._audit("validate", "validator_ai", "候选被硬约束拒绝", {"candidate_id": candidate.id})
+            return
+        if candidate.score_j < 0:
+            candidate.status = "rejected"
+            self._audit("validate", "validator_ai", "候选评分不足", {"candidate_id": candidate.id, "score": candidate.score_j})
+            return
+        candidate.status = "validated"
+        self._audit("validate", "validator_ai", "候选通过验证", {"candidate_id": candidate.id, "score": candidate.score_j})
+
+    def _release_candidate(self, candidate: StrategyCandidate) -> None:
+        if candidate.status != "validated":
+            return
+        level = self._governance_config.autonomy_level
+        if level in {AutonomyLevel.l1_observe, AutonomyLevel.l2_semiauto}:
+            approval = ApprovalItem(
+                id=f"apr-{self._tick:06d}",
+                created_at=datetime.now(timezone.utc),
+                action="release_candidate",
+                reason="挑战者上线需要人工审批",
+                requested_by="releaser_ai",
+                payload={"candidate_id": candidate.id},
+            )
+            self._approvals.appendleft(approval)
+            candidate.status = "awaiting_approval"
+            self._audit("release", "releaser_ai", "生成发布审批", {"approval_id": approval.id, "candidate_id": candidate.id})
+            return
+
+        self._execute_release(candidate, actor="releaser_ai")
+
+    def _execute_release(self, candidate: StrategyCandidate, actor: str) -> None:
+        self._create_snapshot(reason=f"release:{candidate.id}")
+        self._release_state.challenger_version = candidate.name
+        self._release_state.gray_ratio_pct = 10.0
+        self._release_state.auto_expand_enabled = True
+        self._release_state.last_release_at = datetime.now(timezone.utc)
+        self._release_state.status = "gray_running"
+        candidate.status = "gray_running"
+        self._audit("release", actor, "挑战者灰度上线", {"candidate_id": candidate.id, "gray_ratio_pct": 10.0})
+
+        if candidate.score_j >= 1.2:
+            self._release_state.gray_ratio_pct = 40.0
+            self._release_state.status = "gray_expanded"
+            candidate.status = "gray_expanded"
+            self._audit("release", actor, "灰度自动扩量", {"candidate_id": candidate.id, "gray_ratio_pct": 40.0})
+
+        if candidate.score_j >= 1.8:
+            self._release_state.champion_version = candidate.name
+            self._release_state.challenger_version = ""
+            self._release_state.gray_ratio_pct = 0.0
+            self._release_state.status = "promoted"
+            candidate.status = "promoted"
+            self._audit("release", actor, "挑战者晋升冠军", {"candidate_id": candidate.id})
+
+    def _create_snapshot(self, reason: str) -> None:
+        payload = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "reason": reason,
+            "state": self.state.model_dump(mode="json"),
+            "positions": [item.model_dump(mode="json") for item in self._position_book.values()],
+            "release_state": self._release_state.model_dump(mode="json"),
+        }
+        self._snapshots.appendleft(payload)
+
+    def _rollback_latest(self, actor: str, reason: str) -> dict[str, object]:
+        if not self._snapshots:
+            return {"ok": False, "message": "暂无可回滚快照"}
+        snap = self._snapshots[0]
+        state_payload = snap.get("state", {})
+        if isinstance(state_payload, dict):
+            restored = ControlState.model_validate(state_payload)
+            self.state = restored
+        release_payload = snap.get("release_state", {})
+        if isinstance(release_payload, dict):
+            self._release_state = ReleaseState.model_validate(release_payload)
+        self._release_state.last_rollback_at = datetime.now(timezone.utc)
+        self._release_state.status = "rolled_back"
+        self._audit("rollback", actor, "执行回滚", {"reason": reason, "snapshot_reason": snap.get("reason", "")})
+        return {"ok": True, "message": "回滚成功", "snapshot_reason": snap.get("reason", "")}
+
+    def _enforce_hard_constraints(self) -> None:
+        risk = self._governance_config.risk
+        if self.state.drawdown_pct > risk.max_drawdown_pct:
+            self.state.ai_message = "触发全程回撤红线，自动平仓并停止自治"
+            self._position_book.clear()
+            self.state.positions = 0
+            self.state.status = StrategyStatus.halted
+            self._release_state.status = "halted_by_risk"
+            self._audit("risk", "risk_guard", "触发全程回撤红线", {"drawdown_pct": self.state.drawdown_pct})
+        if self.state.daily_drawdown_pct > risk.max_daily_drawdown_pct:
+            self.state.ai_message = "触发当日回撤红线，自动平仓并停止自治"
+            self._position_book.clear()
+            self.state.positions = 0
+            self.state.status = StrategyStatus.halted
+            self._release_state.status = "halted_by_risk"
+            self._audit("risk", "risk_guard", "触发当日回撤红线", {"daily_drawdown_pct": self.state.daily_drawdown_pct})
+
+    def _write_periodic_reports(self) -> None:
+        now = datetime.now(timezone.utc)
+        hourly = (
+            f"[{now.isoformat()}] 小时复盘 | status={self.state.status.value} | equity={self.state.equity:.4f} | "
+            f"return={self.state.total_return_pct:.4f}% | drawdown={self.state.drawdown_pct:.4f}% | fee={self.state.fees_paid:.4f}"
+        )
+        self._reports_hourly.appendleft(hourly)
+        if now.hour % 6 == 0:
+            daily = (
+                f"[{now.isoformat()}] 日复盘 | champion={self._release_state.champion_version} | "
+                f"candidates={len(self._candidates)} | approvals_pending={self.pending_approval_count()}"
+            )
+            self._reports_daily.appendleft(daily)
+
+    def _create_task(self, title: str, summary: str, steps: list[str], status: TaskStatus = TaskStatus.completed) -> None:
+        task = TaskDetail(
+            id=f"task-{self._tick:06d}-{len(self._tasks)+1}",
+            title=title,
+            status=status,
+            created_at=datetime.now(timezone.utc),
+            summary=summary,
+            steps=steps,
+        )
+        self._tasks.appendleft(task)
+
+    def _audit(self, category: str, actor: str, message: str, detail: dict[str, object] | None = None) -> None:
+        event = AuditEvent(
+            id=f"aud-{self._tick:06d}-{len(self._audit_events)+1}",
+            created_at=datetime.now(timezone.utc),
+            category=category,
+            actor=actor,
+            message=message,
+            detail=detail or {},
+        )
+        self._audit_events.appendleft(event)
+
+    def _check_permission(self, role: UserRole, action: str) -> bool:
+        allowed = self._role_permissions.get(role, set())
+        return action in allowed
+
+    def pending_approval_count(self) -> int:
+        return sum(1 for item in self._approvals if item.status == ApprovalStatus.pending)
 
     def _open_mock_position(self, cycle_actions: list[str]) -> None:
         candidates = [
@@ -217,7 +527,7 @@ class GovernanceEngine:
         task = TaskDetail(
             id=f"task-{self._tick:06d}",
             title=f"第{self._tick}轮：策略评估与执行",
-            status="completed",
+            status=TaskStatus.completed,
             created_at=now_ts,
             summary=self.state.ai_message,
             steps=[
@@ -254,6 +564,14 @@ class GovernanceEngine:
         self.state.status = StrategyStatus.paused
         self.state.ai_message = "人工触发全面暂停"
         self.memory.append_ai("human_action", "human", "全面暂停", {"status": self.state.status.value})
+        return {"status": self.state.status.value, "message": self.state.ai_message}
+
+    async def freeze_autonomy(self, req: ActionRequest) -> dict[str, str]:
+        if not self._check_permission(req.role, "freeze_autonomy"):
+            return {"status": "denied", "message": "权限不足"}
+        self.state.status = StrategyStatus.halted
+        self.state.ai_message = "已冻结自治，等待 Human Root 操作"
+        self._audit("control", req.operator, "冻结自治", {"role": req.role.value})
         return {"status": self.state.status.value, "message": self.state.ai_message}
 
     async def resume(self) -> dict[str, str]:
@@ -296,8 +614,92 @@ class GovernanceEngine:
         return {"status": self.state.status.value, "message": self.state.ai_message}
 
     async def record_command(self, operator: str, command: str) -> dict[str, object]:
+        if not any(item in command.lower() for item in self._command_whitelist):
+            return {"status": "rejected", "message": "命令不在白名单中，已拒绝执行"}
+
+        high_risk_keywords = ("deploy", "rollback", "halt", "release", "promote")
+        if any(item in command.lower() for item in high_risk_keywords):
+            approval = ApprovalItem(
+                id=f"apr-cmd-{self._tick:06d}",
+                created_at=datetime.now(timezone.utc),
+                action="command_execute",
+                reason="高风险命令需人工审批",
+                requested_by=operator,
+                payload={"command": command},
+            )
+            self._approvals.appendleft(approval)
+            self._audit("approval", operator, "创建高风险命令审批", {"approval_id": approval.id})
+            cmd = self.memory.append_command(operator=operator, command=command)
+            return {
+                "status": "pending_approval",
+                "message": "高风险命令已进入审批队列",
+                "approval": approval.model_dump(mode="json"),
+                "command": cmd,
+            }
+
         cmd = self.memory.append_command(operator=operator, command=command)
+        self._audit("command", operator, "记录命令", {"command": command})
         return {"status": "ok", "message": "命令已写入AI记忆", "command": cmd}
+
+    async def update_governance_config(self, patch: ConfigPatchRequest) -> dict[str, object]:
+        if not self._check_permission(patch.role, "update_config"):
+            return {"status": "denied", "message": "权限不足"}
+        cfg = self._governance_config
+        if patch.autonomy_level is not None:
+            cfg.autonomy_level = patch.autonomy_level
+        if patch.allow_structural_changes is not None:
+            cfg.allow_structural_changes = patch.allow_structural_changes
+        if patch.allow_night_autonomy is not None:
+            cfg.allow_night_autonomy = patch.allow_night_autonomy
+        if patch.objective_daily_return_pct is not None:
+            cfg.objective_daily_return_pct = patch.objective_daily_return_pct
+        if patch.max_fee_ratio_pct is not None:
+            cfg.max_fee_ratio_pct = patch.max_fee_ratio_pct
+        self._audit("config", patch.operator, "更新治理配置", patch.model_dump(mode="json"))
+        return {"status": "ok", "config": cfg.model_dump(mode="json")}
+
+    async def decide_approval(self, approval_id: str, req: ApprovalDecisionRequest) -> dict[str, object]:
+        if not self._check_permission(req.role, "approve"):
+            return {"status": "denied", "message": "权限不足"}
+
+        target = None
+        for item in self._approvals:
+            if item.id == approval_id:
+                target = item
+                break
+        if target is None:
+            return {"status": "not_found", "message": "审批单不存在"}
+        if target.status != ApprovalStatus.pending:
+            return {"status": "ignored", "message": "审批单已处理"}
+
+        decision = req.decision.strip().lower()
+        if decision not in {"approve", "reject"}:
+            return {"status": "invalid", "message": "decision 必须是 approve 或 reject"}
+
+        target.decided_by = req.operator
+        target.decided_at = datetime.now(timezone.utc)
+        if decision == "reject":
+            target.status = ApprovalStatus.rejected
+            self._audit("approval", req.operator, "驳回审批", {"approval_id": approval_id})
+            return {"status": "rejected", "approval": target.model_dump(mode="json")}
+
+        target.status = ApprovalStatus.approved
+        payload = target.payload if isinstance(target.payload, dict) else {}
+        if target.action == "release_candidate":
+            candidate_id = str(payload.get("candidate_id", ""))
+            for cand in self._candidates:
+                if cand.id == candidate_id:
+                    self._execute_release(cand, actor=req.operator)
+                    break
+        self._audit("approval", req.operator, "通过审批", {"approval_id": approval_id})
+        return {"status": "approved", "approval": target.model_dump(mode="json")}
+
+    async def rollback(self, req: ActionRequest, reason: str = "人工触发") -> dict[str, object]:
+        if not self._check_permission(req.role, "rollback"):
+            return {"status": "denied", "message": "权限不足"}
+        result = self._rollback_latest(actor=req.operator, reason=reason)
+        status = "ok" if bool(result.get("ok")) else "failed"
+        return {"status": status, **result}
 
     async def governance_payload(self) -> dict[str, object]:
         state = await self.snapshot()
@@ -345,6 +747,16 @@ class GovernanceEngine:
             "trades": [item.model_dump(mode="json") for item in list(self._trades)[:120]],
             "runtime_logs": list(self._runtime_logs)[:200],
             "ai_tasks": [item.model_dump(mode="json") for item in list(self._tasks)[:60]],
+            "approvals": [item.model_dump(mode="json") for item in list(self._approvals)[:80]],
+            "candidates": [item.model_dump(mode="json") for item in list(self._candidates)[:80]],
+            "release_state": self._release_state.model_dump(mode="json"),
+            "workflow_status": self._workflow_status,
+            "governance_config": self._governance_config.model_dump(mode="json"),
+            "audit_events": [item.model_dump(mode="json") for item in list(self._audit_events)[:120]],
+            "reports": {
+                "hourly": list(self._reports_hourly)[:120],
+                "daily": list(self._reports_daily)[:30],
+            },
             "memory": self.memory.recent_ai(limit=80),
             "commands": self.memory.recent_commands(limit=30),
         }

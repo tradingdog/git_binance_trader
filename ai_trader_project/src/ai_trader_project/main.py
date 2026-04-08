@@ -7,7 +7,12 @@ from fastapi.responses import HTMLResponse
 
 from ai_trader_project.config import get_settings
 from ai_trader_project.engine import GovernanceEngine
-from ai_trader_project.models import HumanCommand
+from ai_trader_project.models import (
+    ActionRequest,
+    ApprovalDecisionRequest,
+    ConfigPatchRequest,
+    HumanCommand,
+)
 from ai_trader_project.web.dashboard import render_dashboard
 
 settings = get_settings()
@@ -52,23 +57,47 @@ async def submit_command(payload: HumanCommand) -> dict[str, object]:
 
 
 @app.post("/api/actions/pause")
-async def pause() -> dict[str, str]:
+async def pause(payload: ActionRequest | None = None) -> dict[str, str]:
+    _ = payload
     return await engine.pause()
 
 
 @app.post("/api/actions/resume")
-async def resume() -> dict[str, str]:
+async def resume(payload: ActionRequest | None = None) -> dict[str, str]:
+    _ = payload
     return await engine.resume()
 
 
 @app.post("/api/actions/emergency-close")
-async def emergency_close() -> dict[str, str]:
+async def emergency_close(payload: ActionRequest | None = None) -> dict[str, str]:
+    _ = payload
     return await engine.emergency_close()
 
 
 @app.post("/api/actions/halt")
-async def halt() -> dict[str, str]:
+async def halt(payload: ActionRequest | None = None) -> dict[str, str]:
+    _ = payload
     return await engine.halt()
+
+
+@app.post("/api/actions/freeze-autonomy")
+async def freeze_autonomy(payload: ActionRequest) -> dict[str, str]:
+    return await engine.freeze_autonomy(payload)
+
+
+@app.post("/api/actions/rollback")
+async def rollback(payload: ActionRequest) -> dict[str, object]:
+    return await engine.rollback(payload, reason="人工触发回滚")
+
+
+@app.post("/api/governance/config")
+async def patch_governance_config(payload: ConfigPatchRequest) -> dict[str, object]:
+    return await engine.update_governance_config(payload)
+
+
+@app.post("/api/governance/approvals/{approval_id}")
+async def decide_approval(approval_id: str, payload: ApprovalDecisionRequest) -> dict[str, object]:
+    return await engine.decide_approval(approval_id=approval_id, req=payload)
 
 
 @app.get("/", response_class=HTMLResponse)
