@@ -7,7 +7,7 @@
 	- 权限矩阵文档 `ai_trader_project/docs/PERMISSION_MATRIX.md`
 	- 审计日志规范 `ai_trader_project/docs/AUDIT_LOG_SPEC.md`
 	- 主干保护规则说明 `ai_trader_project/docs/BRANCH_PROTECTION_RULES.md`
-	- 回测/压力测试/候选榜单模板 `ai_trader_project/reports/templates/*.md`
+	- 回测/压力测试/候选榜单模板 `ai_trader_project/docs/report_templates/*.md`
 - 清单推进：P0/P1/P2 阶段项与对应交付物完成状态已回填勾选，Step1/Step2/Step3 标记完成。
 
 ## v0.1.4 - 2026-04-08
