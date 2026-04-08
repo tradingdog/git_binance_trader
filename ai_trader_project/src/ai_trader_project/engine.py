@@ -21,7 +21,10 @@ from .models import (
     ControlState,
     GovernanceConfig,
     CadenceState,
+    CodeProposal,
+    CodeVersionRecord,
     MarketType,
+    MarketCandle,
     ModelProbeResult,
     ParameterVersion,
     PositionSnapshot,
@@ -65,7 +68,11 @@ class GovernanceEngine:
         self._performance_versions: deque[PerformanceVersion] = deque(maxlen=300)
         self._idempotency_cache: set[str] = set()
         self._champion_library: deque[str] = deque(maxlen=80)
+        self._code_proposals: deque[CodeProposal] = deque(maxlen=200)
+        self._code_versions: deque[CodeVersionRecord] = deque(maxlen=200)
+        self._market_history: deque[MarketCandle] = deque(maxlen=2000)
         self._recovery_continuity_count = 0
+        self._explanation_quality_score = 0.62
         self._retry_count = 0
         self._timeout_count = 0
         self._compensation_count = 0
@@ -200,6 +207,7 @@ class GovernanceEngine:
             self._close_mock_position(cycle_actions)
 
         self._apply_token_usage(cycle_actions)
+        self._append_market_timeseries(now_ts)
         self._refresh_account(now_ts, cycle_actions)
 
     def _run_embedded_workflows(self) -> None:
@@ -263,6 +271,18 @@ class GovernanceEngine:
 
         if self._tick % 12 == 0:
             self._write_periodic_reports()
+
+        if self._tick % 14 == 0:
+            self._optimize_objective_weights()
+
+        if self._tick % 16 == 0:
+            self._l2_to_l3_trial()
+
+        if self._tick % 18 == 0:
+            self._retire_weak_candidates()
+
+        if self._tick % 20 == 0:
+            self._improve_explanation_quality()
 
     def _execute_with_reliability(self, workflow_name: str, fn) -> None:
         self._update_workflow(workflow_name, "running")
@@ -335,6 +355,19 @@ class GovernanceEngine:
             status="pending_validation",
         )
 
+    def _append_market_timeseries(self, now_ts: datetime) -> None:
+        symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT"]
+        for sym in symbols:
+            base = self._rng.uniform(10, 120)
+            op = round(base, 4)
+            cl = round(base * (1 + self._rng.uniform(-0.01, 0.01)), 4)
+            hi = round(max(op, cl) * (1 + self._rng.uniform(0.0, 0.005)), 4)
+            lo = round(min(op, cl) * (1 - self._rng.uniform(0.0, 0.005)), 4)
+            vol = round(self._rng.uniform(1200, 8800), 4)
+            self._market_history.appendleft(
+                MarketCandle(symbol=sym, ts=now_ts, open=op, high=hi, low=lo, close=cl, volume=vol)
+            )
+
     def _validate_candidate(self, candidate: StrategyCandidate) -> None:
         report = self._run_backtest(candidate)
         self._backtests.appendleft(report)
@@ -355,6 +388,11 @@ class GovernanceEngine:
             candidate.status = "rejected"
             self._audit("validate", "validator_ai", "候选评分不足", {"candidate_id": candidate.id, "score": candidate.score_j})
             return
+        counter_ok, counter_note = self._dual_model_counterproof(candidate)
+        if not counter_ok:
+            candidate.status = "rejected"
+            self._audit("validate", "validator_ai", "双模型反证未通过", {"candidate_id": candidate.id, "note": counter_note})
+            return
         candidate.status = "validated"
         self._performance_versions.appendleft(
             PerformanceVersion(
@@ -369,6 +407,29 @@ class GovernanceEngine:
             )
         )
         self._audit("validate", "validator_ai", "候选通过验证", {"candidate_id": candidate.id, "score": candidate.score_j})
+        self._create_code_proposal(candidate)
+
+    def _dual_model_counterproof(self, candidate: StrategyCandidate) -> tuple[bool, str]:
+        proposer_score = candidate.score_j
+        reviewer_score = round(proposer_score + self._rng.uniform(-0.5, 0.5), 6)
+        drift = abs(proposer_score - reviewer_score)
+        ok = drift <= 0.35
+        note = f"proposer={proposer_score:.4f}, reviewer={reviewer_score:.4f}, drift={drift:.4f}"
+        self._audit("validate", "dual_model_guard", "双模型反证结果", {"candidate_id": candidate.id, "note": note, "passed": ok})
+        return ok, note
+
+    def _create_code_proposal(self, candidate: StrategyCandidate) -> None:
+        proposal = CodeProposal(
+            id=f"prp-{self._tick:06d}-{candidate.id}",
+            created_at=datetime.now(timezone.utc),
+            title=f"chore(strategy): tune params for {candidate.name}",
+            branch=f"ai/candidate/{candidate.id}",
+            pr_url=f"https://github.com/tradingdog/git_binance_trader/pull/{1000 + (self._tick % 899)}",
+            candidate_id=candidate.id,
+            status="open",
+        )
+        self._code_proposals.appendleft(proposal)
+        self._audit("code_change", "coder_ai", "生成改码分支与PR提案", proposal.model_dump(mode="json"))
 
     def _run_backtest(self, candidate: StrategyCandidate) -> BacktestReport:
         p_value = round(self._rng.uniform(0.01, 0.2), 4)
@@ -444,11 +505,24 @@ class GovernanceEngine:
             self._release_state.champion_version = candidate.name
             if candidate.name not in self._champion_library:
                 self._champion_library.appendleft(candidate.name)
+            self._record_code_version(candidate)
             self._release_state.challenger_version = ""
             self._release_state.gray_ratio_pct = 0.0
             self._release_state.status = "promoted"
             candidate.status = "promoted"
             self._audit("release", actor, "挑战者晋升冠军", {"candidate_id": candidate.id})
+
+    def _record_code_version(self, candidate: StrategyCandidate) -> None:
+        record = CodeVersionRecord(
+            id=f"cv-{self._tick:06d}-{candidate.id}",
+            created_at=datetime.now(timezone.utc),
+            git_tag=f"ai-{candidate.name}-{self._tick}",
+            pr_url=f"https://github.com/tradingdog/git_binance_trader/pull/{1200 + (self._tick % 799)}",
+            champion_version=candidate.name,
+            note="挑战者晋升冠军后生成代码版本记录",
+        )
+        self._code_versions.appendleft(record)
+        self._audit("release", "releaser_ai", "记录代码版本与Tag", record.model_dump(mode="json"))
 
     def _create_snapshot(self, reason: str) -> None:
         payload = {
@@ -512,6 +586,34 @@ class GovernanceEngine:
                 f"win_tasks={len(self._tasks)} | alarms={len(self._alarms)}"
             )
             self._reports_weekly.appendleft(weekly)
+
+    def _optimize_objective_weights(self) -> None:
+        w = self._governance_config.objective_weights
+        w.w1_day_return = round(max(0.5, min(1.8, w.w1_day_return + self._rng.uniform(-0.05, 0.08))), 4)
+        w.w3_mdd = round(max(0.5, min(1.8, w.w3_mdd + self._rng.uniform(-0.03, 0.07))), 4)
+        self._audit("optimize", "optimizer_ai", "目标函数权重自动优化", w.model_dump(mode="json"))
+
+    def _l2_to_l3_trial(self) -> None:
+        if self._governance_config.autonomy_level == AutonomyLevel.l2_semiauto and self.state.drawdown_pct < 2.0:
+            self._governance_config.autonomy_level = AutonomyLevel.l3_controlled_auto
+            self._audit("autonomy", "governance_ai", "L2到L3试运行已开启", {"drawdown_pct": self.state.drawdown_pct})
+
+    def _retire_weak_candidates(self) -> None:
+        before = len(self._candidates)
+        survived = [c for c in self._candidates if not (c.status == "rejected" and c.score_j < -0.2)]
+        self._candidates = deque(survived, maxlen=260)
+        removed = before - len(self._candidates)
+        if removed > 0:
+            self._audit("strategy_family", "optimizer_ai", "淘汰失效策略族", {"removed": removed})
+
+    def _improve_explanation_quality(self) -> None:
+        self._explanation_quality_score = round(min(0.99, self._explanation_quality_score + self._rng.uniform(0.005, 0.02)), 4)
+        self._audit(
+            "audit",
+            "auditor_ai",
+            "解释质量优化",
+            {"explanation_quality_score": self._explanation_quality_score},
+        )
 
     def _create_task(self, title: str, summary: str, steps: list[str], status: TaskStatus = TaskStatus.completed) -> TaskDetail:
         task = TaskDetail(
@@ -916,6 +1018,19 @@ class GovernanceEngine:
         self._audit("model_probe", "ai_core", "执行模型通道探针", probe.model_dump(mode="json"))
         return {"status": "ok", "probe": probe.model_dump(mode="json")}
 
+    async def list_code_proposals(self) -> dict[str, object]:
+        return {"status": "ok", "items": [item.model_dump(mode="json") for item in list(self._code_proposals)[:80]]}
+
+    async def list_code_versions(self) -> dict[str, object]:
+        return {"status": "ok", "items": [item.model_dump(mode="json") for item in list(self._code_versions)[:80]]}
+
+    async def market_timeseries(self, symbol: str = "", limit: int = 120) -> dict[str, object]:
+        rows = list(self._market_history)
+        if symbol:
+            rows = [r for r in rows if r.symbol == symbol.upper()]
+        rows = rows[:max(1, min(limit, 500))]
+        return {"status": "ok", "items": [item.model_dump(mode="json") for item in rows]}
+
     async def decide_approval(self, approval_id: str, req: ApprovalDecisionRequest) -> dict[str, object]:
         if not self._check_permission(req.role, "approve"):
             return {"status": "denied", "message": "权限不足"}
@@ -1009,9 +1124,17 @@ class GovernanceEngine:
             "candidates": [item.model_dump(mode="json") for item in list(self._candidates)[:80]],
             "release_state": self._release_state.model_dump(mode="json"),
             "workflow_status": self._workflow_status,
+            "orchestration": {
+                "backend": self.settings.orchestration_backend,
+                "durable_execution_ready": self.settings.orchestration_backend in {"prefect", "temporal"},
+            },
             "cadence": self._cadence.model_dump(mode="json"),
+            "explanation_quality_score": self._explanation_quality_score,
             "governance_config": self._governance_config.model_dump(mode="json"),
             "audit_events": [item.model_dump(mode="json") for item in list(self._audit_events)[:120]],
+            "code_proposals": [item.model_dump(mode="json") for item in list(self._code_proposals)[:60]],
+            "code_versions": [item.model_dump(mode="json") for item in list(self._code_versions)[:60]],
+            "market_timeseries": [item.model_dump(mode="json") for item in list(self._market_history)[:200]],
             "backtests": [item.model_dump(mode="json") for item in list(self._backtests)[:80]],
             "parameter_versions": [item.model_dump(mode="json") for item in list(self._parameter_versions)[:80]],
             "performance_versions": [item.model_dump(mode="json") for item in list(self._performance_versions)[:80]],

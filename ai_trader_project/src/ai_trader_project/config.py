@@ -19,6 +19,7 @@ class Settings(BaseModel):
     ai_input_price_per_million: float = 2.0
     ai_output_price_per_million: float = 12.0
     ai_cache_price_per_million: float = 0.2
+    orchestration_backend: str = "embedded"
     ai_memory_file: str = "memory/ai-memory.jsonl"
     human_command_file: str = "memory/human-commands.jsonl"
 
@@ -43,6 +44,7 @@ def get_settings() -> Settings:
         ai_input_price_per_million=float(os.getenv("AI_INPUT_PRICE_PER_MILLION", "2")),
         ai_output_price_per_million=float(os.getenv("AI_OUTPUT_PRICE_PER_MILLION", "12")),
         ai_cache_price_per_million=float(os.getenv("AI_CACHE_PRICE_PER_MILLION", "0.2")),
+        orchestration_backend=os.getenv("ORCHESTRATION_BACKEND", "embedded"),
         ai_memory_file=str(ai_memory_path),
         human_command_file=str(human_command_path),
     )

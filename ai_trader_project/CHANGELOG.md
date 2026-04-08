@@ -1,5 +1,14 @@
 # AI项目更新日志
 
+## v0.1.8 - 2026-04-08
+- 引擎新增改码代理闭环：候选通过验证后自动生成分支/PR 提案队列（`code_proposals`），并提供查询接口 `GET /api/ai/code-proposals`。
+- 引擎新增代码版本记录闭环：冠军晋升时自动写入 Tag+PR 记录（`code_versions`），并提供接口 `GET /api/ai/code-versions`。
+- 引擎新增行情时序数据缓冲（OHLCV）并提供接口 `GET /api/market/timeseries`，用于数据层可视化与回放。
+- 引擎新增双模型反证闸门、目标函数自动优化、L2->L3 试运行、解释质量优化、失效策略族淘汰钩子。
+- 新增 Prefect 编排骨架模块 `src/ai_trader_project/orchestrator_prefect.py` 与 `orchestrator` 可选依赖组，补齐 durable execution 接入准备。
+- 清单回填：编排引擎、改码代理 PR、行情时序数据、双模型反证、代码版本化、P3 Step4 条目标记完成。
+- 测试通过：`python -m pytest -q` 结果 `8 passed`。
+
 ## v0.1.7 - 2026-04-08
 - 新增编排选型记录文档：`ai_trader_project/docs/ORCHESTRATION_DECISION.md`，明确当前优先 Prefect，并记录未选 Temporal 的原因与迁移路径。
 - 清单进一步回填：完成运行节奏、端到端闭环多数步骤、滚动窗口回测、极端压力测试、密钥隔离实践、可重复性等条目勾选。

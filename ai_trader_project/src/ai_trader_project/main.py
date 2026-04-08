@@ -122,6 +122,21 @@ async def model_probe() -> dict[str, object]:
     return await engine.model_probe()
 
 
+@app.get("/api/ai/code-proposals")
+async def code_proposals() -> dict[str, object]:
+    return await engine.list_code_proposals()
+
+
+@app.get("/api/ai/code-versions")
+async def code_versions() -> dict[str, object]:
+    return await engine.list_code_versions()
+
+
+@app.get("/api/market/timeseries")
+async def market_timeseries(symbol: str = "", limit: int = 120) -> dict[str, object]:
+    return await engine.market_timeseries(symbol=symbol, limit=limit)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def page() -> str:
     return render_dashboard()

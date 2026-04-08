@@ -279,6 +279,35 @@ class CadenceState(BaseModel):
     weekly_review_days: int = 7
 
 
+class CodeProposal(BaseModel):
+    id: str
+    created_at: datetime
+    title: str
+    branch: str
+    pr_url: str
+    candidate_id: str
+    status: str = "open"
+
+
+class CodeVersionRecord(BaseModel):
+    id: str
+    created_at: datetime
+    git_tag: str
+    pr_url: str
+    champion_version: str
+    note: str
+
+
+class MarketCandle(BaseModel):
+    symbol: str
+    ts: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
 class HumanCommand(BaseModel):
     command: str
     operator: str = "human"

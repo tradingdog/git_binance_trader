@@ -38,6 +38,10 @@ def test_governance_payload() -> None:
     assert 'backtests' in payload
     assert 'parameter_versions' in payload
     assert 'performance_versions' in payload
+    assert 'code_proposals' in payload
+    assert 'code_versions' in payload
+    assert 'market_timeseries' in payload
+    assert 'orchestration' in payload
     assert 'total_cost_usd' in payload['ai_usage']
     assert 'context_continuity_count' in payload['reliability']
 
@@ -171,3 +175,33 @@ def test_model_probe_endpoint() -> None:
     assert probe['stable_channel_model']
     assert probe['experimental_channel_model']
     assert probe['selected_region']
+
+
+def test_code_and_market_endpoints() -> None:
+    # 触发一次结构化指令，增加任务与审计上下文
+    _ = client.post(
+        '/api/ai/command/structured',
+        json={
+            'command': '分析并回测候选',
+            'operator': 'human',
+            'priority': 'medium',
+            'scope': 'next_cycle',
+            'objective_weights': {'w1_day_return': 1.0},
+            'deadline': 'T+1h',
+            'rollback_condition': '回撤放大',
+            'idempotency_key': 'test-key-002',
+        },
+    )
+
+    r1 = client.get('/api/ai/code-proposals')
+    assert r1.status_code == 200
+    assert r1.json()['status'] == 'ok'
+
+    r2 = client.get('/api/ai/code-versions')
+    assert r2.status_code == 200
+    assert r2.json()['status'] == 'ok'
+
+    r3 = client.get('/api/market/timeseries?symbol=BTCUSDT&limit=20')
+    assert r3.status_code == 200
+    assert r3.json()['status'] == 'ok'
+    assert isinstance(r3.json()['items'], list)

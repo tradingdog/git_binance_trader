@@ -1,6 +1,6 @@
 [project]
 name = "git-binance-trader-ai"
-version = "0.1.7"
+version = "0.1.8"
 description = "独立AI治理模拟交易项目"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+orchestrator = ["prefect>=2.16.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
