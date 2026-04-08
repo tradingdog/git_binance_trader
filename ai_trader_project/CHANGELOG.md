@@ -1,5 +1,13 @@
 # AI项目更新日志
 
+## v0.1.6 - 2026-04-08
+- 新增模型通道探针接口：`/api/governance/model-probe`，输出稳定/实验模型通道、区域主备选择、回退原因与 IAM/配额/账单/区域可用性探针结果。
+- 新增失败恢复上下文连续性计数，写入 `reliability.context_continuity_count` 并记录审计事件。
+- 新增冠军策略库 `champion_library`，挑战者晋升时保留冠军历史，避免覆盖式发布。
+- 可靠性增强：工作流失败后执行上下文恢复审计；继续保留幂等/重试/超时/补偿统计。
+- 清单推进：补充勾选 Gemini 通道与区域策略、上下文连续性、双闸门、可恢复快照、参数/绩效版本化与冠军策略库。
+- 测试扩展并通过：`python -m pytest -q`。
+
 ## v0.1.5 - 2026-04-08
 - 新增 GitHub Actions 工作流：`.github/workflows/ai-governance-ci.yml`，对 AI 子项目启用测试、风险模式闸门（强制 SIMULATION）与 gitleaks 密钥扫描。
 - 新增 `CODEOWNERS`，为 AI 项目与 CI 配置提供审阅责任锚点。

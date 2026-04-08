@@ -39,6 +39,7 @@ def test_governance_payload() -> None:
     assert 'parameter_versions' in payload
     assert 'performance_versions' in payload
     assert 'total_cost_usd' in payload['ai_usage']
+    assert 'context_continuity_count' in payload['reliability']
 
 
 def test_actions_and_command() -> None:
@@ -159,3 +160,14 @@ def test_structured_command_task_control_and_audit_replay() -> None:
     )
     assert r4.status_code == 200
     assert r4.json()['status'] == 'deduplicated'
+
+
+def test_model_probe_endpoint() -> None:
+    r = client.get('/api/governance/model-probe')
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload['status'] == 'ok'
+    probe = payload['probe']
+    assert probe['stable_channel_model']
+    assert probe['experimental_channel_model']
+    assert probe['selected_region']

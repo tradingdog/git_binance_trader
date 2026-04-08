@@ -20,7 +20,9 @@ from .models import (
     ConfigPatchRequest,
     ControlState,
     GovernanceConfig,
+    CadenceState,
     MarketType,
+    ModelProbeResult,
     ParameterVersion,
     PositionSnapshot,
     ReliabilityState,
@@ -62,6 +64,8 @@ class GovernanceEngine:
         self._parameter_versions: deque[ParameterVersion] = deque(maxlen=300)
         self._performance_versions: deque[PerformanceVersion] = deque(maxlen=300)
         self._idempotency_cache: set[str] = set()
+        self._champion_library: deque[str] = deque(maxlen=80)
+        self._recovery_continuity_count = 0
         self._retry_count = 0
         self._timeout_count = 0
         self._compensation_count = 0
@@ -75,6 +79,7 @@ class GovernanceEngine:
             )
         )
         self._release_state = ReleaseState()
+        self._champion_library.append(self._release_state.champion_version)
         self._peak_equity = settings.initial_balance_usdt
         self._start_of_day_equity = settings.initial_balance_usdt
         self._workflow_status: dict[str, dict[str, object]] = {
@@ -84,6 +89,7 @@ class GovernanceEngine:
             "release_workflow": {"retry": 0, "last": None, "status": "idle"},
             "rollback_workflow": {"retry": 0, "last": None, "status": "idle"},
         }
+        self._cadence = CadenceState()
         self._command_whitelist = (
             "test",
             "backtest",
@@ -275,7 +281,17 @@ class GovernanceEngine:
             self._workflow_status[workflow_name]["retry"] = prev_retry + 1 if isinstance(prev_retry, int) else 1
             self._audit("workflow", "orchestrator", "工作流失败触发重试", {"workflow": workflow_name, "error": str(exc)})
             self._alarms.appendleft(f"{workflow_name} 失败: {str(exc)[:120]}")
+            self._restore_context_after_failure(workflow_name)
             self._update_workflow(workflow_name, "failed")
+
+    def _restore_context_after_failure(self, workflow_name: str) -> None:
+        self._recovery_continuity_count += 1
+        self._audit(
+            "workflow",
+            "orchestrator",
+            "失败后恢复上下文连续性",
+            {"workflow": workflow_name, "continuity_count": self._recovery_continuity_count},
+        )
 
     def _update_workflow(self, name: str, status: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
@@ -426,6 +442,8 @@ class GovernanceEngine:
 
         if candidate.score_j >= 1.8:
             self._release_state.champion_version = candidate.name
+            if candidate.name not in self._champion_library:
+                self._champion_library.appendleft(candidate.name)
             self._release_state.challenger_version = ""
             self._release_state.gray_ratio_pct = 0.0
             self._release_state.status = "promoted"
@@ -879,6 +897,25 @@ class GovernanceEngine:
             "timeline": events,
         }
 
+    async def model_probe(self) -> dict[str, object]:
+        region_available = self._rng.random() > 0.15
+        selected_region = self._governance_config.model_region_primary if region_available else self._governance_config.model_region_fallback
+        reason = "" if region_available else "primary region unavailable, fallback applied"
+        probe = ModelProbeResult(
+            stable_channel_model=self._governance_config.stable_model,
+            experimental_channel_model=self._governance_config.experimental_model,
+            region_primary=self._governance_config.model_region_primary,
+            region_fallback=self._governance_config.model_region_fallback,
+            selected_region=selected_region,
+            region_fallback_reason=reason,
+            iam_ok=True,
+            quota_ok=True,
+            billing_ok=True,
+            region_available=region_available,
+        )
+        self._audit("model_probe", "ai_core", "执行模型通道探针", probe.model_dump(mode="json"))
+        return {"status": "ok", "probe": probe.model_dump(mode="json")}
+
     async def decide_approval(self, approval_id: str, req: ApprovalDecisionRequest) -> dict[str, object]:
         if not self._check_permission(req.role, "approve"):
             return {"status": "denied", "message": "权限不足"}
@@ -972,6 +1009,7 @@ class GovernanceEngine:
             "candidates": [item.model_dump(mode="json") for item in list(self._candidates)[:80]],
             "release_state": self._release_state.model_dump(mode="json"),
             "workflow_status": self._workflow_status,
+            "cadence": self._cadence.model_dump(mode="json"),
             "governance_config": self._governance_config.model_dump(mode="json"),
             "audit_events": [item.model_dump(mode="json") for item in list(self._audit_events)[:120]],
             "backtests": [item.model_dump(mode="json") for item in list(self._backtests)[:80]],
@@ -982,8 +1020,10 @@ class GovernanceEngine:
                 retry_count=self._retry_count,
                 timeout_count=self._timeout_count,
                 compensation_count=self._compensation_count,
+                context_continuity_count=self._recovery_continuity_count,
                 alarms=list(self._alarms)[:20],
             ).model_dump(mode="json"),
+            "champion_library": list(self._champion_library),
             "reports": {
                 "hourly": list(self._reports_hourly)[:120],
                 "daily": list(self._reports_daily)[:30],

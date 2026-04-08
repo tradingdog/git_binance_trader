@@ -117,6 +117,11 @@ async def audit_replay(limit: int = 80) -> dict[str, object]:
     return await engine.audit_replay(limit=limit)
 
 
+@app.get("/api/governance/model-probe")
+async def model_probe() -> dict[str, object]:
+    return await engine.model_probe()
+
+
 @app.get("/", response_class=HTMLResponse)
 async def page() -> str:
     return render_dashboard()

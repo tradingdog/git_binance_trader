@@ -255,7 +255,28 @@ class ReliabilityState(BaseModel):
     retry_count: int
     timeout_count: int
     compensation_count: int
+    context_continuity_count: int = 0
     alarms: list[str] = Field(default_factory=list)
+
+
+class ModelProbeResult(BaseModel):
+    stable_channel_model: str
+    experimental_channel_model: str
+    region_primary: str
+    region_fallback: str
+    selected_region: str
+    region_fallback_reason: str
+    iam_ok: bool
+    quota_ok: bool
+    billing_ok: bool
+    region_available: bool
+
+
+class CadenceState(BaseModel):
+    monitor_every_minutes: int = 5
+    hourly_optimize_hours: int = 1
+    daily_structure_hours: int = 24
+    weekly_review_days: int = 7
 
 
 class HumanCommand(BaseModel):
