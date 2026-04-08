@@ -126,6 +126,13 @@ def test_home_page_is_server_rendered() -> None:
     assert '结构化指令中心' in html
     assert '加载中...' not in html
     assert 'bootstrap-data' in html
+    assert 'no-store' in r.headers['cache-control']
+
+
+def test_governance_payload_is_not_cached() -> None:
+    r = client.get('/api/ai/governance')
+    assert r.status_code == 200
+    assert 'no-store' in r.headers['cache-control']
 
 
 def test_structured_command_task_control_and_audit_replay() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from ai_trader_project.config import get_settings
 from ai_trader_project.engine import GovernanceEngine
@@ -19,6 +19,11 @@ from ai_trader_project.web.dashboard import render_dashboard
 
 settings = get_settings()
 engine = GovernanceEngine(settings)
+CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 
 @asynccontextmanager
@@ -44,13 +49,13 @@ async def health() -> dict[str, str | float | int]:
 
 
 @app.get("/api/dashboard")
-async def dashboard() -> dict[str, object]:
-    return await engine.governance_payload()
+async def dashboard() -> JSONResponse:
+    return JSONResponse(await engine.governance_payload(), headers=CACHE_HEADERS)
 
 
 @app.get("/api/ai/governance")
-async def governance() -> dict[str, object]:
-    return await engine.governance_payload()
+async def governance() -> JSONResponse:
+    return JSONResponse(await engine.governance_payload(), headers=CACHE_HEADERS)
 
 
 @app.post("/api/ai/command")
@@ -138,6 +143,6 @@ async def market_timeseries(symbol: str = "", limit: int = 120) -> dict[str, obj
 
 
 @app.get("/", response_class=HTMLResponse)
-async def page() -> str:
+async def page() -> HTMLResponse:
     payload = await engine.governance_payload()
-    return render_dashboard(payload)
+    return HTMLResponse(render_dashboard(payload), headers=CACHE_HEADERS)
