@@ -25,26 +25,20 @@ app = FastAPI(title=settings.project_name, lifespan=lifespan)
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
+async def health() -> dict[str, str | float | int]:
     state = await engine.snapshot()
-    return {"status": "ok", "mode": settings.trading_mode, "engine_status": state.status}
+    return {
+        "status": "ok",
+        "mode": settings.trading_mode,
+        "engine_status": state.status.value,
+        "equity": state.equity,
+        "positions": state.positions,
+    }
 
 
 @app.get("/api/dashboard")
 async def dashboard() -> dict[str, object]:
-    state = await engine.snapshot()
-    return {
-        "system": {
-            "status": state.status,
-            "equity": state.equity,
-            "drawdown_pct": state.drawdown_pct,
-            "daily_drawdown_pct": state.daily_drawdown_pct,
-            "positions": state.positions,
-            "ai_message": state.ai_message,
-            "ai_insight": state.ai_insight,
-            "generated_at": state.generated_at.isoformat(),
-        }
-    }
+    return await engine.governance_payload()
 
 
 @app.get("/api/ai/governance")
