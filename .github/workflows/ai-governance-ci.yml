@@ -1,0 +1,55 @@
+name: ai-governance-ci
+
+on:
+  pull_request:
+    paths:
+      - "ai_trader_project/**"
+      - ".github/workflows/ai-governance-ci.yml"
+  push:
+    branches:
+      - release/**
+    paths:
+      - "ai_trader_project/**"
+      - ".github/workflows/ai-governance-ci.yml"
+
+jobs:
+  test-and-security:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai_trader_project
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Risk config gate
+        run: |
+          python - <<'PY'
+          from ai_trader_project.config import get_settings
+          s = get_settings()
+          assert s.trading_mode == 'SIMULATION', 'TRADING_MODE must stay SIMULATION'
+          print('risk gate ok')
+          PY
+
+      - name: Install gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.2/gitleaks_8.24.2_linux_x64.tar.gz -o gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+
+      - name: Secret leakage scan
+        working-directory: .
+        run: gitleaks detect --source . --verbose --redact

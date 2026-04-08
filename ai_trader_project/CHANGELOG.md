@@ -1,5 +1,15 @@
 # AI项目更新日志
 
+## v0.1.5 - 2026-04-08
+- 新增 GitHub Actions 工作流：`.github/workflows/ai-governance-ci.yml`，对 AI 子项目启用测试、风险模式闸门（强制 SIMULATION）与 gitleaks 密钥扫描。
+- 新增 `CODEOWNERS`，为 AI 项目与 CI 配置提供审阅责任锚点。
+- 新增治理文档与交付物：
+	- 权限矩阵文档 `ai_trader_project/docs/PERMISSION_MATRIX.md`
+	- 审计日志规范 `ai_trader_project/docs/AUDIT_LOG_SPEC.md`
+	- 主干保护规则说明 `ai_trader_project/docs/BRANCH_PROTECTION_RULES.md`
+	- 回测/压力测试/候选榜单模板 `ai_trader_project/reports/templates/*.md`
+- 清单推进：P0/P1/P2 阶段项与对应交付物完成状态已回填勾选，Step1/Step2/Step3 标记完成。
+
 ## v0.1.4 - 2026-04-08
 - 新增结构化指令通道：`/api/ai/command/structured` 支持优先级、生效范围、目标权重、截止时间、回滚条件与幂等键，避免重复执行。
 - 新增任务控制通道：`/api/tasks/{task_id}/control` 支持暂停/重试/终止，补齐任务队列的人机协同控制能力。
