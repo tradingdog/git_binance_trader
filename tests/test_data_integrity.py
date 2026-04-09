@@ -5,7 +5,7 @@ import httpx
 
 from git_binance_trader.config import Settings
 from git_binance_trader.core.exchange import SimulationExchange
-from git_binance_trader.core.models import MarketType, Side, SymbolSnapshot, Trade
+from git_binance_trader.core.models import MarketType, Position, Side, SymbolSnapshot, Trade
 from git_binance_trader.core.risk import RiskManager
 from git_binance_trader.core.strategy import OpportunityStrategy
 from git_binance_trader.services.binance_market_data import BinanceMarketDataService
@@ -277,7 +277,7 @@ def test_apply_market_prices_closes_position_on_stop_loss() -> None:
     assert exchange.trades[-1].side == Side.sell
 
 
-def test_strategy_keeps_single_market_candidate_per_symbol() -> None:
+def test_strategy_keeps_distinct_market_candidates_per_symbol() -> None:
     strategy = OpportunityStrategy()
     watchlist = [
         SymbolSnapshot(
@@ -303,8 +303,55 @@ def test_strategy_keeps_single_market_candidate_per_symbol() -> None:
     ]
 
     scored = strategy._score_candidates(watchlist)
-    assert len(scored) == 1
-    assert scored[0][0].symbol == "BTCUSDT"
+    assert len(scored) == 2
+    assert {f"{item.market_type.value}:{item.symbol}" for item, _ in scored} == {
+        "spot:BTCUSDT",
+        "perpetual:BTCUSDT",
+    }
+
+
+def test_strategy_rotation_exit_uses_same_market_score_for_existing_position() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.rotation_exit_score = 1.6
+    position = Position(
+        symbol="SIRENUSDT",
+        quantity=100,
+        entry_price=1.0,
+        current_price=1.0,
+        market_type=MarketType.perpetual,
+        side=Side.buy,
+        leverage=3,
+        stop_loss=0.95,
+        take_profit=1.05,
+        highest_price=1.0,
+    )
+    watchlist = [
+        SymbolSnapshot(
+            symbol="SIRENUSDT",
+            price=1.0,
+            market_cap_rank=20,
+            volume_24h=1_200_000_000,
+            change_pct_24h=4.0,
+            market_type=MarketType.spot,
+            leverage=1,
+            data_source="binance-spot",
+        ),
+        SymbolSnapshot(
+            symbol="SIRENUSDT",
+            price=1.0,
+            market_cap_rank=21,
+            volume_24h=2_200_000_000,
+            change_pct_24h=8.0,
+            market_type=MarketType.perpetual,
+            leverage=3,
+            data_source="binance-futures",
+        ),
+    ]
+
+    scored = strategy._score_candidates(watchlist)
+    exits = strategy._build_rotation_exits(scored, {"perpetual:SIRENUSDT": position})
+
+    assert exits == []
 
 
 def test_strategy_respects_margin_utilization_target_for_perpetual() -> None:

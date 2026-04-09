@@ -195,7 +195,7 @@ class OpportunityStrategy:
     def _score_candidates(self, watchlist: list[SymbolSnapshot], now: datetime | None = None) -> list[tuple[SymbolSnapshot, float]]:
         now_ts = now or datetime.now(timezone.utc)
         candidates = [item for item in watchlist if item.price > 0]
-        best_by_symbol: dict[str, tuple[SymbolSnapshot, float]] = {}
+        best_by_market_symbol: dict[str, tuple[SymbolSnapshot, float]] = {}
         by_symbol: dict[str, list[SymbolSnapshot]] = defaultdict(list)
         for item in candidates:
             by_symbol[item.symbol].append(item)
@@ -208,10 +208,11 @@ class OpportunityStrategy:
                 score = self._score_perpetual(factors, item.funding_rate)
             else:
                 score = self._score_alpha(factors)
-            existing = best_by_symbol.get(item.symbol)
+            market_symbol_key = f"{item.market_type.value}:{item.symbol}"
+            existing = best_by_market_symbol.get(market_symbol_key)
             if existing is None or score > existing[1]:
-                best_by_symbol[item.symbol] = (item, score)
-        return sorted(best_by_symbol.values(), key=lambda row: row[1], reverse=True)
+                best_by_market_symbol[market_symbol_key] = (item, score)
+        return sorted(best_by_market_symbol.values(), key=lambda row: row[1], reverse=True)
 
     def _compute_factors(
         self,
