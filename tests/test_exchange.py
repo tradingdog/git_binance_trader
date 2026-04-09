@@ -1,6 +1,6 @@
 from git_binance_trader.config import Settings
 from git_binance_trader.core.exchange import SimulationExchange
-from git_binance_trader.core.models import LiquidityType, MarketType, Side, SymbolSnapshot, Trade
+from git_binance_trader.core.models import LiquidityType, MarketType, Position, Side, SymbolSnapshot, Trade
 from git_binance_trader.core.risk import RiskManager
 
 
@@ -258,3 +258,64 @@ def test_exchange_state_roundtrip_preserves_fee_accumulation() -> None:
     metrics = restored.account_state()
     assert metrics["fees_paid"] == 0.1575
     assert metrics["cash"] == 10009.8425
+
+
+def test_exchange_remap_symbols_only_changes_alpha_market() -> None:
+    settings = Settings(initial_balance_usdt=10000.0)
+    exchange = SimulationExchange(settings, RiskManager(settings))
+
+    exchange.positions = {
+        "perpetual:SIREN": Position(
+            symbol="SIREN",
+            quantity=100,
+            entry_price=1.0,
+            current_price=1.0,
+            market_type=MarketType.perpetual,
+            side=Side.buy,
+            leverage=3,
+            stop_loss=0.95,
+            take_profit=1.05,
+            highest_price=1.0,
+        ),
+        "alpha:KOGEUSDT": Position(
+            symbol="KOGEUSDT",
+            quantity=1,
+            entry_price=10.0,
+            current_price=10.0,
+            market_type=MarketType.alpha,
+            side=Side.buy,
+            leverage=1,
+            stop_loss=9.0,
+            take_profit=11.0,
+            highest_price=10.0,
+        ),
+    }
+    exchange.trades = [
+        Trade(
+            symbol="SIREN",
+            side=Side.buy,
+            quantity=100,
+            price=1.0,
+            market_type=MarketType.perpetual,
+            leverage=3,
+            strategy="test",
+        ),
+        Trade(
+            symbol="KOGEUSDT",
+            side=Side.buy,
+            quantity=1,
+            price=10.0,
+            market_type=MarketType.alpha,
+            strategy="test",
+        ),
+    ]
+
+    changed = exchange.remap_symbols({"SIRENUSDT": "SIREN", "KOGEUSDT": "KOGE"}, market_type=MarketType.alpha)
+
+    assert changed
+    assert "perpetual:SIRENUSDT" in exchange.positions
+    assert exchange.positions["perpetual:SIRENUSDT"].symbol == "SIRENUSDT"
+    assert "alpha:KOGE" in exchange.positions
+    assert exchange.positions["alpha:KOGE"].symbol == "KOGE"
+    assert exchange.trades[0].symbol == "SIRENUSDT"
+    assert exchange.trades[1].symbol == "KOGE"

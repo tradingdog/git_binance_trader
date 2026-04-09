@@ -88,30 +88,66 @@ class SimulationExchange:
         self.trades = restored_trades[-5000:]
         return True
 
-    def remap_symbols(self, symbol_aliases: dict[str, str]) -> bool:
+    def remap_symbols(
+        self,
+        symbol_aliases: dict[str, str],
+        market_type: MarketType | None = None,
+    ) -> bool:
         if not symbol_aliases:
             return False
         updated = False
         remapped_positions: dict[str, Position] = {}
         for position in self.positions.values():
+            if market_type is not None and position.market_type != market_type:
+                normalized_symbol = self._normalize_non_alpha_symbol(position.symbol, position.market_type)
+                if normalized_symbol != position.symbol:
+                    position.symbol = normalized_symbol
+                    updated = True
+                remapped_positions[self._position_key(position.symbol, position.market_type)] = position
+                continue
             new_symbol = symbol_aliases.get(position.symbol, position.symbol)
             if new_symbol != position.symbol:
                 position.symbol = new_symbol
+                updated = True
+            normalized_symbol = self._normalize_non_alpha_symbol(position.symbol, position.market_type)
+            if normalized_symbol != position.symbol:
+                position.symbol = normalized_symbol
                 updated = True
             remapped_positions[self._position_key(position.symbol, position.market_type)] = position
         self.positions = remapped_positions
 
         for trade in self.trades:
+            if market_type is not None and trade.market_type != market_type:
+                normalized_symbol = self._normalize_non_alpha_symbol(trade.symbol, trade.market_type)
+                if normalized_symbol != trade.symbol:
+                    trade.symbol = normalized_symbol
+                    updated = True
+                continue
             new_symbol = symbol_aliases.get(trade.symbol, trade.symbol)
             if new_symbol != trade.symbol:
                 trade.symbol = new_symbol
                 updated = True
+            normalized_symbol = self._normalize_non_alpha_symbol(trade.symbol, trade.market_type)
+            if normalized_symbol != trade.symbol:
+                trade.symbol = normalized_symbol
+                updated = True
 
         remapped_snapshots: dict[str, SymbolSnapshot] = {}
         for key, snapshot in self._latest_snapshot_map.items():
+            if market_type is not None and snapshot.market_type != market_type:
+                normalized_symbol = self._normalize_non_alpha_symbol(snapshot.symbol, snapshot.market_type)
+                if normalized_symbol != snapshot.symbol:
+                    snapshot.symbol = normalized_symbol
+                    updated = True
+                remapped_snapshots[self._position_key(snapshot.symbol, snapshot.market_type)] = snapshot
+                continue
             new_symbol = symbol_aliases.get(snapshot.symbol, snapshot.symbol)
             if new_symbol != snapshot.symbol:
                 snapshot.symbol = new_symbol
+                updated = True
+            normalized_symbol = self._normalize_non_alpha_symbol(snapshot.symbol, snapshot.market_type)
+            if normalized_symbol != snapshot.symbol:
+                snapshot.symbol = normalized_symbol
                 updated = True
             remapped_snapshots[self._position_key(snapshot.symbol, snapshot.market_type)] = snapshot
         self._latest_snapshot_map = remapped_snapshots
@@ -325,6 +361,17 @@ class SimulationExchange:
     @staticmethod
     def _position_key(symbol: str, market_type) -> str:
         return f"{market_type.value}:{symbol}"
+
+    @staticmethod
+    def _normalize_non_alpha_symbol(symbol: str, market_type: MarketType) -> str:
+        normalized = str(symbol or "").upper()
+        if market_type == MarketType.alpha or not normalized:
+            return normalized
+        if normalized.endswith("USDT"):
+            return normalized
+        if re.fullmatch(r"[A-Z0-9_]+", normalized):
+            return f"{normalized}USDT"
+        return normalized
 
     @staticmethod
     def _effective_liquidity_type(trade: Trade) -> LiquidityType:

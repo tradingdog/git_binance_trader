@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from git_binance_trader.config import Settings
-from git_binance_trader.core.models import EquityPoint, StorageStatus, Trade
+from git_binance_trader.core.models import EquityPoint, MarketType, StorageStatus, Trade
 
 
 class EquityHistoryStore:
@@ -85,7 +85,11 @@ class EquityHistoryStore:
             return 0
         return sum(1 for line in self.trade_history_path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip())
 
-    def remap_trade_symbols(self, symbol_aliases: dict[str, str]) -> bool:
+    def remap_trade_symbols(
+        self,
+        symbol_aliases: dict[str, str],
+        market_type: MarketType | None = None,
+    ) -> bool:
         if not symbol_aliases or not self.trade_history_path.exists():
             return False
         changed = False
@@ -98,9 +102,20 @@ class EquityHistoryStore:
             except Exception:
                 remapped_rows.append(raw_line)
                 continue
+            if market_type is not None and trade.market_type != market_type:
+                normalized_symbol = self._normalize_non_alpha_symbol(trade.symbol, trade.market_type)
+                if normalized_symbol != trade.symbol:
+                    trade.symbol = normalized_symbol
+                    changed = True
+                remapped_rows.append(trade.model_dump_json())
+                continue
             new_symbol = symbol_aliases.get(trade.symbol, trade.symbol)
             if new_symbol != trade.symbol:
                 trade.symbol = new_symbol
+                changed = True
+            normalized_symbol = self._normalize_non_alpha_symbol(trade.symbol, trade.market_type)
+            if normalized_symbol != trade.symbol:
+                trade.symbol = normalized_symbol
                 changed = True
             remapped_rows.append(trade.model_dump_json())
         if changed:
@@ -110,7 +125,11 @@ class EquityHistoryStore:
             self.trade_history_path.write_text(content, encoding="utf-8")
         return changed
 
-    def remap_exchange_state_symbols(self, symbol_aliases: dict[str, str]) -> bool:
+    def remap_exchange_state_symbols(
+        self,
+        symbol_aliases: dict[str, str],
+        market_type: MarketType | None = None,
+    ) -> bool:
         payload = self.load_exchange_state()
         if not payload or not symbol_aliases:
             return False
@@ -123,13 +142,33 @@ class EquityHistoryStore:
                 if not isinstance(item, dict):
                     continue
                 symbol = str(item.get("symbol", ""))
-                new_symbol = symbol_aliases.get(symbol, symbol)
+                item_market_type_raw = str(item.get("market_type", ""))
+                try:
+                    item_market_type = MarketType(item_market_type_raw)
+                except ValueError:
+                    item_market_type = None
+                if market_type is not None and item_market_type != market_type:
+                    new_symbol = self._normalize_non_alpha_symbol(symbol, item_market_type)
+                else:
+                    new_symbol = symbol_aliases.get(symbol, symbol)
+                    new_symbol = self._normalize_non_alpha_symbol(new_symbol, item_market_type)
                 if new_symbol != symbol:
                     item["symbol"] = new_symbol
                     changed = True
         if changed:
             self.save_exchange_state(payload)
         return changed
+
+    @staticmethod
+    def _normalize_non_alpha_symbol(symbol: str, market_type: MarketType | None) -> str:
+        normalized = str(symbol or "").upper()
+        if market_type in (None, MarketType.alpha) or not normalized:
+            return normalized
+        if normalized.endswith("USDT"):
+            return normalized
+        if normalized.replace("_", "").isalnum():
+            return f"{normalized}USDT"
+        return normalized
 
     def save_strategy_state(self, payload: dict[str, object]) -> None:
         self.strategy_state_path.parent.mkdir(parents=True, exist_ok=True)

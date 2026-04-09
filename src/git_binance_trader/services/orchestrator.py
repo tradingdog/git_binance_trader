@@ -7,7 +7,7 @@ from pathlib import Path
 
 from git_binance_trader.config import get_settings
 from git_binance_trader.core.exchange import SimulationExchange
-from git_binance_trader.core.models import AccountSnapshot, DashboardState, EquityPoint
+from git_binance_trader.core.models import AccountSnapshot, DashboardState, EquityPoint, MarketType
 from git_binance_trader.core.risk import RiskManager
 from git_binance_trader.core.strategy import OpportunityStrategy
 from git_binance_trader.services.binance_market_data import BinanceMarketDataService
@@ -214,9 +214,9 @@ class TradingOrchestrator:
         symbol_aliases = self.market_data.alpha_symbol_aliases()
         if not symbol_aliases:
             return
-        exchange_changed = self.exchange.remap_symbols(symbol_aliases)
-        history_changed = self.history_store.remap_trade_symbols(symbol_aliases)
-        state_changed = self.history_store.remap_exchange_state_symbols(symbol_aliases)
+        exchange_changed = self.exchange.remap_symbols(symbol_aliases, market_type=MarketType.alpha)
+        history_changed = self.history_store.remap_trade_symbols(symbol_aliases, market_type=MarketType.alpha)
+        state_changed = self.history_store.remap_exchange_state_symbols(symbol_aliases, market_type=MarketType.alpha)
         if exchange_changed or history_changed or state_changed:
             self.history_store.save_exchange_state(self.exchange.export_state())
 
