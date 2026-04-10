@@ -349,7 +349,7 @@ def test_strategy_rotation_exit_uses_same_market_score_for_existing_position() -
     ]
 
     scored = strategy._score_candidates(watchlist)
-    exits = strategy._build_rotation_exits(scored, {"perpetual:SIRENUSDT": position})
+    exits = strategy._build_rotation_exits(scored, {"perpetual:SIRENUSDT": position}, [], datetime.now(timezone.utc))
 
     assert exits == []
 
@@ -590,6 +590,203 @@ def test_strategy_raises_quality_threshold_for_marginal_signals() -> None:
         cash=10_000.0,
         equity=10_000.0,
         recent_trades=[],
+        now_ts=now,
+    )
+
+    assert trades == []
+
+
+def test_strategy_rotation_exit_requires_two_weak_cycles() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.rotation_exit_score = 1.6
+    position = Position(
+        symbol="SIRENUSDT",
+        quantity=100,
+        entry_price=1.0,
+        current_price=1.0,
+        market_type=MarketType.perpetual,
+        side=Side.buy,
+        leverage=3,
+        stop_loss=0.95,
+        take_profit=1.05,
+        highest_price=1.0,
+    )
+    watch = SymbolSnapshot(
+        symbol="SIRENUSDT",
+        price=1.0,
+        market_cap_rank=20,
+        volume_24h=1_200_000_000,
+        change_pct_24h=1.0,
+        market_type=MarketType.perpetual,
+        leverage=3,
+        data_source="binance-futures",
+    )
+    now = datetime.now(timezone.utc)
+
+    scored = [(watch, 1.2)]
+    exits_first = strategy._build_rotation_exits(
+        scored,
+        {"perpetual:SIRENUSDT": position},
+        [
+            Trade(
+                symbol="SIRENUSDT",
+                side=Side.buy,
+                quantity=100,
+                price=1.0,
+                market_type=MarketType.perpetual,
+                strategy="test",
+                created_at=now - timedelta(minutes=8),
+            )
+        ],
+        now,
+    )
+    exits_second = strategy._build_rotation_exits(
+        scored,
+        {"perpetual:SIRENUSDT": position},
+        [
+            Trade(
+                symbol="SIRENUSDT",
+                side=Side.buy,
+                quantity=100,
+                price=1.0,
+                market_type=MarketType.perpetual,
+                strategy="test",
+                created_at=now - timedelta(minutes=8),
+            )
+        ],
+        now,
+    )
+
+    assert exits_first == []
+    assert len(exits_second) == 1
+
+
+def test_strategy_rotation_exit_respects_min_hold_time() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.rotation_exit_score = 1.6
+    position = Position(
+        symbol="SIRENUSDT",
+        quantity=100,
+        entry_price=1.0,
+        current_price=1.0,
+        market_type=MarketType.perpetual,
+        side=Side.buy,
+        leverage=3,
+        stop_loss=0.95,
+        take_profit=1.05,
+        highest_price=1.0,
+    )
+    watch = SymbolSnapshot(
+        symbol="SIRENUSDT",
+        price=1.0,
+        market_cap_rank=20,
+        volume_24h=1_200_000_000,
+        change_pct_24h=1.0,
+        market_type=MarketType.perpetual,
+        leverage=3,
+        data_source="binance-futures",
+    )
+    now = datetime.now(timezone.utc)
+    scored = [(watch, 1.2)]
+
+    exits = strategy._build_rotation_exits(
+        scored,
+        {"perpetual:SIRENUSDT": position},
+        [
+            Trade(
+                symbol="SIRENUSDT",
+                side=Side.buy,
+                quantity=100,
+                price=1.0,
+                market_type=MarketType.perpetual,
+                strategy="test",
+                created_at=now - timedelta(minutes=3),
+            )
+        ],
+        now,
+    )
+
+    assert exits == []
+
+
+def test_strategy_blocks_reentry_after_rotation_exit() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.entry_score_threshold = 0.5
+    strategy.params.min_quote_volume = 1.0
+    now = datetime.now(timezone.utc)
+    watch = SymbolSnapshot(
+        symbol="SIRENUSDT",
+        price=2.0,
+        market_cap_rank=10,
+        volume_24h=2_000_000_000,
+        change_pct_24h=9.0,
+        market_type=MarketType.perpetual,
+        leverage=3,
+        data_source="binance-futures",
+    )
+
+    strategy._score_candidates = lambda watchlist, now=None: [(watch, 2.5)]  # type: ignore[method-assign]
+    recent = [
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.sell,
+            quantity=1,
+            price=2.1,
+            market_type=MarketType.perpetual,
+            strategy="test",
+            note="机会衰减退出",
+            created_at=now - timedelta(minutes=10),
+        )
+    ]
+
+    trades, _ = strategy.decide(
+        watchlist=[watch],
+        positions={},
+        cash=10_000.0,
+        equity=10_000.0,
+        recent_trades=recent,
+        now_ts=now,
+    )
+
+    assert trades == []
+
+
+def test_strategy_blocks_high_frequency_symbol_trading() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.entry_score_threshold = 0.5
+    strategy.params.min_quote_volume = 1.0
+    now = datetime.now(timezone.utc)
+    watch = SymbolSnapshot(
+        symbol="SIRENUSDT",
+        price=2.0,
+        market_cap_rank=10,
+        volume_24h=2_000_000_000,
+        change_pct_24h=9.0,
+        market_type=MarketType.perpetual,
+        leverage=3,
+        data_source="binance-futures",
+    )
+
+    strategy._score_candidates = lambda watchlist, now=None: [(watch, 2.5)]  # type: ignore[method-assign]
+    recent = [
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.sell if idx % 2 else Side.buy,
+            quantity=1,
+            price=2.0,
+            market_type=MarketType.perpetual,
+            strategy="test",
+            created_at=now - timedelta(minutes=5),
+        )
+        for idx in range(14)
+    ]
+
+    trades, _ = strategy.decide(
+        watchlist=[watch],
+        positions={},
+        cash=10_000.0,
+        equity=10_000.0,
+        recent_trades=recent,
         now_ts=now,
     )
 

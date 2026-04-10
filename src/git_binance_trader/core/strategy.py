@@ -30,6 +30,9 @@ class OpportunityStrategy:
     MAX_TARGET_MARGIN_UTILIZATION_PCT = 55.0
     MIN_POSITION_BUDGET_PCT = 8.0
     REENTRY_COOLDOWN_SECONDS = 4 * 60
+    ROTATION_REENTRY_COOLDOWN_SECONDS = 20 * 60
+    MIN_HOLD_SECONDS = 6 * 60
+    MAX_TRADES_PER_SYMBOL_PER_HOUR = 14
     LOSS_STREAK_LOOKBACK_SECONDS = 90 * 60
     LOSS_STREAK_PENALTY_STEP = 0.6
     QUALITY_THRESHOLD_UPLIFT = 0.15
@@ -43,6 +46,7 @@ class OpportunityStrategy:
         self._last_adapt_hour: str | None = None
         self._last_adaptation_event: dict[str, object] | None = None
         self._latest_adaptation_snapshot: dict[str, object] | None = None
+        self._weak_score_streak: dict[str, int] = {}
 
     def decide(
         self,
@@ -61,7 +65,7 @@ class OpportunityStrategy:
         self._adapt_hourly(recent_trades or [], now)
         scored = self._score_candidates(watchlist, now)
 
-        exits = self._build_rotation_exits(scored, positions)
+        exits = self._build_rotation_exits(scored, positions, recent_trades or [], now)
         trades.extend(exits)
         if exits:
             insights.append(f"轮动退出 {len(exits)} 笔")
@@ -85,6 +89,10 @@ class OpportunityStrategy:
             if slots <= 0 or room <= 0:
                 break
             if self._in_reentry_cooldown(symbol_key, recent_trades, now):
+                continue
+            if self._in_rotation_reentry_cooldown(symbol_key, recent_trades, now):
+                continue
+            if self._symbol_trade_count_within(symbol_key, recent_trades, now, 3600) >= self.MAX_TRADES_PER_SYMBOL_PER_HOUR:
                 continue
 
             effective_score = score - self._loss_streak_penalty(symbol_key, recent_trades, now)
@@ -137,6 +145,7 @@ class OpportunityStrategy:
             "last_adaptation_event": self._last_adaptation_event,
             "latest_adaptation_snapshot": self._latest_adaptation_snapshot,
             "first_seen_ts": {k: v.isoformat() for k, v in self._first_seen_ts.items()},
+            "weak_score_streak": self._weak_score_streak,
             "series": {k: list(v) for k, v in self._series.items()},
         }
 
@@ -174,6 +183,13 @@ class OpportunityStrategy:
                     self._first_seen_ts[key] = datetime.fromisoformat(value)
                 except ValueError:
                     continue
+
+        self._weak_score_streak.clear()
+        weak_score_payload = payload.get("weak_score_streak", {})
+        if isinstance(weak_score_payload, dict):
+            for key, value in weak_score_payload.items():
+                if isinstance(key, str) and isinstance(value, int):
+                    self._weak_score_streak[key] = max(0, value)
 
         self._series.clear()
         series_payload = payload.get("series", {})
@@ -307,25 +323,38 @@ class OpportunityStrategy:
         self,
         scored: list[tuple[SymbolSnapshot, float]],
         positions: dict[str, Position],
+        recent_trades: list[Trade],
+        now: datetime,
     ) -> list[Trade]:
         score_map = {f"{item.market_type.value}:{item.symbol}": score for item, score in scored}
         exits: list[Trade] = []
         for position in positions.values():
-            score = score_map.get(f"{position.market_type.value}:{position.symbol}", -999.0)
-            if score < self.params.rotation_exit_score:
-                exits.append(
-                    Trade(
-                        symbol=position.symbol,
-                        side=Side.sell,
-                        quantity=position.quantity,
-                        price=position.current_price,
-                        market_type=position.market_type,
-                        leverage=position.leverage,
-                        liquidity_type=LiquidityType.maker,
-                        strategy=self.name,
-                        note=f"机会衰减退出 score={score:.2f}",
-                    )
+            key = f"{position.market_type.value}:{position.symbol}"
+            score = score_map.get(key, -999.0)
+            if score >= self.params.rotation_exit_score:
+                self._weak_score_streak.pop(key, None)
+                continue
+            open_age = self._position_open_age_seconds(key, recent_trades, now)
+            if open_age is not None and open_age < self.MIN_HOLD_SECONDS:
+                continue
+            streak = self._weak_score_streak.get(key, 0) + 1
+            self._weak_score_streak[key] = streak
+            if streak < 2:
+                continue
+            exits.append(
+                Trade(
+                    symbol=position.symbol,
+                    side=Side.sell,
+                    quantity=position.quantity,
+                    price=position.current_price,
+                    market_type=position.market_type,
+                    leverage=position.leverage,
+                    liquidity_type=LiquidityType.maker,
+                    strategy=self.name,
+                    note=f"机会衰减退出 score={score:.2f}",
                 )
+            )
+            self._weak_score_streak.pop(key, None)
         return exits
 
     def _ingest_watchlist(self, watchlist: list[SymbolSnapshot], now: datetime) -> None:
@@ -349,6 +378,8 @@ class OpportunityStrategy:
         wins = [t for t in closed if t.realized_pnl > 0]
         realized_sum = sum(t.realized_pnl for t in closed)
         fee_sum = sum(t.fee_paid for t in closed)
+        fee_ratio = fee_sum / max(abs(realized_sum), 1.0)
+        fee_dominant = fee_sum > 0 and fee_ratio > 1.1
         win_rate = len(wins) / len(closed) if closed else 0.5
         avg_pnl = realized_sum / len(closed) if closed else 0.0
 
@@ -378,6 +409,16 @@ class OpportunityStrategy:
             self.params.position_budget_pct = min(12.0, self.params.position_budget_pct + 0.3)
             self.params.min_quote_volume = max(80_000_000.0, self.params.min_quote_volume * 0.96)
 
+        if closed and fee_dominant:
+            self.params.max_positions = max(self.MIN_MAX_POSITIONS, self.params.max_positions - 1)
+            self.params.max_exposure_pct = max(self.MIN_MAX_EXPOSURE_PCT, self.params.max_exposure_pct - 2.0)
+            self.params.target_margin_utilization_pct = max(
+                self.MIN_TARGET_MARGIN_UTILIZATION_PCT,
+                self.params.target_margin_utilization_pct - 1.5,
+            )
+            self.params.entry_score_threshold = min(4.8, self.params.entry_score_threshold + 0.1)
+            self.params.rotation_exit_score = min(2.6, self.params.rotation_exit_score + 0.06)
+
         self._enforce_param_floors()
 
         self._last_adapt_hour = hour_key
@@ -392,6 +433,8 @@ class OpportunityStrategy:
                 "avg_realized_pnl": round(avg_pnl, 6),
                 "realized_sum": round(realized_sum, 6),
                 "fee_sum": round(fee_sum, 6),
+                "fee_ratio": round(fee_ratio, 4),
+                "fee_dominant": fee_dominant,
             },
         }
         self._latest_adaptation_snapshot = self._last_adaptation_event
@@ -419,6 +462,46 @@ class OpportunityStrategy:
             if f"{trade.market_type.value}:{trade.symbol}" == symbol_key:
                 return True
         return False
+
+    def _in_rotation_reentry_cooldown(self, symbol_key: str, recent_trades: list[Trade], now: datetime) -> bool:
+        cutoff = now.timestamp() - self.ROTATION_REENTRY_COOLDOWN_SECONDS
+        for trade in reversed(recent_trades):
+            if trade.created_at.timestamp() < cutoff:
+                break
+            if trade.side != Side.sell:
+                continue
+            if f"{trade.market_type.value}:{trade.symbol}" != symbol_key:
+                continue
+            if (trade.note or "") == "机会衰减退出":
+                return True
+        return False
+
+    @staticmethod
+    def _symbol_trade_count_within(
+        symbol_key: str,
+        recent_trades: list[Trade],
+        now: datetime,
+        window_seconds: int,
+    ) -> int:
+        cutoff = now.timestamp() - window_seconds
+        count = 0
+        for trade in reversed(recent_trades):
+            if trade.created_at.timestamp() < cutoff:
+                break
+            if f"{trade.market_type.value}:{trade.symbol}" == symbol_key:
+                count += 1
+        return count
+
+    @staticmethod
+    def _position_open_age_seconds(symbol_key: str, recent_trades: list[Trade], now: datetime) -> float | None:
+        for trade in reversed(recent_trades):
+            if f"{trade.market_type.value}:{trade.symbol}" != symbol_key:
+                continue
+            if trade.side == Side.buy:
+                return max(0.0, now.timestamp() - trade.created_at.timestamp())
+            if trade.side == Side.sell:
+                return None
+        return None
 
     def _loss_streak_penalty(self, symbol_key: str, recent_trades: list[Trade], now: datetime) -> float:
         cutoff = now.timestamp() - self.LOSS_STREAK_LOOKBACK_SECONDS
