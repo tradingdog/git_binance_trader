@@ -27,6 +27,7 @@ class TradingOrchestrator:
         self.history_store = EquityHistoryStore(self.settings)
         self._restore_exchange_state()
         self._restore_strategy_state()
+        self._trade_sync_offset = len(self.exchange.trades)
         self._sync_trade_history()
         self._lock = asyncio.Lock()
         self._last_state: DashboardState | None = None
@@ -203,12 +204,12 @@ class TradingOrchestrator:
         self.strategy.import_state(payload)
 
     def _sync_trade_history(self) -> None:
-        persisted_count = self.history_store.trade_count()
-        current_count = len(self.exchange.trades)
-        if current_count <= persisted_count:
+        new_trades = self.exchange.trades[self._trade_sync_offset:]
+        if not new_trades:
             return
-        for trade in self.exchange.trades[persisted_count:]:
+        for trade in new_trades:
             self.history_store.append_trade(trade)
+        self._trade_sync_offset = len(self.exchange.trades)
 
     def _migrate_alpha_symbols(self) -> None:
         symbol_aliases = self.market_data.alpha_symbol_aliases()
@@ -311,8 +312,14 @@ class TradingOrchestrator:
     def list_recent_trades(self, limit: int = 500) -> list[dict[str, object]]:
         limit = max(1, min(limit, 5000))
         persisted = self.history_store.load_trades(limit=limit)
-        source = persisted if persisted else self.exchange.trades[-limit:]
-        return [trade.model_dump(mode="json") for trade in reversed(source)]
+        # Merge: persisted file has historical trades, exchange has recent in-memory
+        # New trades after restore may not yet be flushed — append them
+        new_in_memory = self.exchange.trades[self._trade_sync_offset:]
+        if new_in_memory:
+            all_trades = list(persisted) + list(new_in_memory)
+        else:
+            all_trades = list(persisted) if persisted else list(self.exchange.trades[-limit:])
+        return [trade.model_dump(mode="json") for trade in reversed(all_trades[-limit:])]
 
     def tail_runtime_log(self, lines: int = 500) -> str:
         lines = max(1, min(lines, 5000))
