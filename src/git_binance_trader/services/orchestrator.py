@@ -27,8 +27,7 @@ class TradingOrchestrator:
         self.history_store = EquityHistoryStore(self.settings)
         self._restore_exchange_state()
         self._restore_strategy_state()
-        self._trade_sync_offset = len(self.exchange.trades)
-        self._sync_trade_history()
+        self._reconcile_trade_history()
         self._lock = asyncio.Lock()
         self._last_state: DashboardState | None = None
         self._last_report = ""
@@ -202,6 +201,19 @@ class TradingOrchestrator:
         if not payload:
             return
         self.strategy.import_state(payload)
+
+    def _reconcile_trade_history(self) -> None:
+        """One-time startup: append exchange trades newer than the latest persisted record."""
+        latest_persisted = self.history_store.load_trades(limit=1)
+        if latest_persisted:
+            latest_ts = latest_persisted[-1].created_at
+            new_trades = [t for t in self.exchange.trades if t.created_at > latest_ts]
+            for trade in new_trades:
+                self.history_store.append_trade(trade)
+        elif self.exchange.trades:
+            for trade in self.exchange.trades:
+                self.history_store.append_trade(trade)
+        self._trade_sync_offset = len(self.exchange.trades)
 
     def _sync_trade_history(self) -> None:
         new_trades = self.exchange.trades[self._trade_sync_offset:]
