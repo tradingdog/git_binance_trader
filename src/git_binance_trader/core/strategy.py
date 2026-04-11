@@ -10,29 +10,34 @@ from git_binance_trader.core.models import LiquidityType, MarketType, Position, 
 
 @dataclass
 class AdaptiveParams:
-    max_positions: int = 4
-    max_exposure_pct: float = 25.0
-    target_margin_utilization_pct: float = 18.0
-    entry_score_threshold: float = 2.8
+    max_positions: int = 3
+    max_exposure_pct: float = 50.0
+    target_margin_utilization_pct: float = 35.0
+    entry_score_threshold: float = 3.2
     rotation_exit_score: float = 1.6
-    position_budget_pct: float = 6.0
-    min_quote_volume: float = 120_000_000.0
+    position_budget_pct: float = 10.0
+    min_quote_volume: float = 150_000_000.0
     perpetual_leverage: int = 3
 
 
 class OpportunityStrategy:
-    name = "adaptive_opportunity_v2"
-    MIN_MAX_POSITIONS = 3
-    MAX_MAX_POSITIONS = 6
+    name = "trend_momentum_v3"
+    STRATEGY_VERSION = 2
+    # ── 仓位与敞口 ──
+    MIN_MAX_POSITIONS = 2
+    MAX_MAX_POSITIONS = 5
     MIN_MAX_EXPOSURE_PCT = 45.0
-    MAX_MAX_EXPOSURE_PCT = 60.0
+    MAX_MAX_EXPOSURE_PCT = 65.0
     MIN_TARGET_MARGIN_UTILIZATION_PCT = 30.0
     MAX_TARGET_MARGIN_UTILIZATION_PCT = 55.0
     MIN_POSITION_BUDGET_PCT = 8.0
-    REENTRY_COOLDOWN_SECONDS = 4 * 60
-    ROTATION_REENTRY_COOLDOWN_SECONDS = 20 * 60
-    MIN_HOLD_SECONDS = 6 * 60
-    MAX_TRADES_PER_SYMBOL_PER_HOUR = 14
+    # ── 决策节流 ──
+    DECISION_INTERVAL_SECONDS = 60
+    # ── 冷却与频率控制 ──
+    REENTRY_COOLDOWN_SECONDS = 10 * 60
+    ROTATION_REENTRY_COOLDOWN_SECONDS = 45 * 60
+    MIN_HOLD_SECONDS = 20 * 60
+    MAX_TRADES_PER_SYMBOL_PER_HOUR = 3
     STOPLOSS_QUARANTINE_SECONDS = 3 * 60 * 60
     STOPLOSS_QUARANTINE_THRESHOLD = 2
     MAX_CHASE_24H_PCT = 14.0
@@ -40,17 +45,28 @@ class OpportunityStrategy:
     LOSS_STREAK_LOOKBACK_SECONDS = 90 * 60
     LOSS_STREAK_PENALTY_STEP = 0.6
     QUALITY_THRESHOLD_UPLIFT = 0.15
+    # ── 趋势退出参数 ──
+    TREND_EXIT_MIN_HOLD_SECONDS = 20 * 60
+    FLAT_POSITION_TIMEOUT_SECONDS = 90 * 60
+    FLAT_POSITION_THRESHOLD_PCT = 0.5
+    PROFIT_PROTECT_TRIGGER_PCT = 1.8
+    PROFIT_PROTECT_EXIT_PCT = 0.3
+    # ── 均线参数 ──
+    MA_SHORT_MINUTES = 8.0
+    MA_MID_MINUTES = 25.0
 
     def __init__(self) -> None:
         self.risk_per_trade_pct = 0.35
         self.params = AdaptiveParams()
         self._enforce_param_floors()
-        self._series: dict[str, deque[tuple[float, float, float]]] = defaultdict(lambda: deque(maxlen=90))
+        self._series: dict[str, deque[tuple[float, float, float]]] = defaultdict(lambda: deque(maxlen=720))
         self._first_seen_ts: dict[str, datetime] = {}
         self._last_adapt_hour: str | None = None
         self._last_adaptation_event: dict[str, object] | None = None
         self._latest_adaptation_snapshot: dict[str, object] | None = None
         self._weak_score_streak: dict[str, int] = {}
+        self._last_decision_ts: datetime | None = None
+        self._position_high_water: dict[str, float] = {}
 
     def decide(
         self,
@@ -67,12 +83,21 @@ class OpportunityStrategy:
         insights: list[str] = []
         self._ingest_watchlist(watchlist, now)
         self._adapt_hourly(recent_trades or [], now)
+        self._update_position_high_water(positions)
+
+        # Decision throttle — collect data every cycle but decide less often
+        if self._last_decision_ts is not None:
+            elapsed = (now - self._last_decision_ts).total_seconds()
+            if elapsed < self.DECISION_INTERVAL_SECONDS:
+                return [], "数据采集中，等待决策窗口"
+        self._last_decision_ts = now
+
         scored = self._score_candidates(watchlist, now)
 
-        exits = self._build_rotation_exits(scored, positions, recent_trades or [], now)
+        exits = self._build_trend_exits(positions, recent_trades or [], now)
         trades.extend(exits)
         if exits:
-            insights.append(f"轮动退出 {len(exits)} 笔")
+            insights.append(f"趋势退出 {len(exits)} 笔")
 
         exposure = self._current_exposure_pct(positions, equity)
         margin_util = self._current_margin_utilization_pct(positions, equity)
@@ -101,6 +126,8 @@ class OpportunityStrategy:
             if self._in_stoploss_quarantine(symbol_key, recent_trades, now):
                 continue
             if self._is_chasing_risk(symbol_key, snapshot):
+                continue
+            if not self._is_trend_confirmed(symbol_key, snapshot):
                 continue
 
             effective_score = score - self._loss_streak_penalty(symbol_key, recent_trades, now)
@@ -146,7 +173,7 @@ class OpportunityStrategy:
 
     def export_state(self) -> dict[str, object]:
         return {
-            "version": 1,
+            "version": self.STRATEGY_VERSION,
             "risk_per_trade_pct": self.risk_per_trade_pct,
             "params": asdict(self.params),
             "last_adapt_hour": self._last_adapt_hour,
@@ -155,6 +182,8 @@ class OpportunityStrategy:
             "first_seen_ts": {k: v.isoformat() for k, v in self._first_seen_ts.items()},
             "weak_score_streak": self._weak_score_streak,
             "series": {k: list(v) for k, v in self._series.items()},
+            "last_decision_ts": self._last_decision_ts.isoformat() if self._last_decision_ts else None,
+            "position_high_water": dict(self._position_high_water),
         }
 
     def import_state(self, payload: dict[str, object]) -> bool:
@@ -165,13 +194,19 @@ class OpportunityStrategy:
         except (TypeError, ValueError):
             return False
 
-        params_payload = payload.get("params", {})
-        if isinstance(params_payload, dict):
-            try:
-                self.params = AdaptiveParams(**params_payload)
-                self._enforce_param_floors()
-            except Exception:
-                return False
+        saved_version = payload.get("version", 1)
+        if saved_version != self.STRATEGY_VERSION:
+            # Strategy version changed — reset adaptive params to new defaults
+            self.params = AdaptiveParams()
+            self._enforce_param_floors()
+        else:
+            params_payload = payload.get("params", {})
+            if isinstance(params_payload, dict):
+                try:
+                    self.params = AdaptiveParams(**params_payload)
+                    self._enforce_param_floors()
+                except Exception:
+                    return False
 
         self._last_adapt_hour = payload.get("last_adapt_hour") if isinstance(payload.get("last_adapt_hour"), str) else None
         self._last_adaptation_event = payload.get("last_adaptation_event") if isinstance(payload.get("last_adaptation_event"), dict) else None
@@ -205,8 +240,8 @@ class OpportunityStrategy:
             for key, rows in series_payload.items():
                 if not isinstance(key, str) or not isinstance(rows, list):
                     continue
-                target = deque(maxlen=90)
-                for row in rows[-90:]:
+                target = deque(maxlen=720)
+                for row in rows[-720:]:
                     if not isinstance(row, (list, tuple)) or len(row) != 3:
                         continue
                     try:
@@ -214,6 +249,25 @@ class OpportunityStrategy:
                     except (TypeError, ValueError):
                         continue
                 self._series[key] = target
+
+        # Restore new v2 fields
+        last_dec = payload.get("last_decision_ts")
+        if isinstance(last_dec, str):
+            try:
+                self._last_decision_ts = datetime.fromisoformat(last_dec)
+            except ValueError:
+                pass
+
+        self._position_high_water.clear()
+        hw_payload = payload.get("position_high_water", {})
+        if isinstance(hw_payload, dict):
+            for key, value in hw_payload.items():
+                if isinstance(key, str):
+                    try:
+                        self._position_high_water[key] = float(value)
+                    except (TypeError, ValueError):
+                        continue
+
         return True
 
     def _score_candidates(self, watchlist: list[SymbolSnapshot], now: datetime | None = None) -> list[tuple[SymbolSnapshot, float]]:
@@ -232,7 +286,7 @@ class OpportunityStrategy:
                 score = self._score_perpetual(factors, item.funding_rate)
             else:
                 score = self._score_alpha(factors)
-            score = max(min(score, 12.0), -4.0)
+            score = max(min(score, 20.0), -4.0)
             market_symbol_key = f"{item.market_type.value}:{item.symbol}"
             existing = best_by_market_symbol.get(market_symbol_key)
             if existing is None or score > existing[1]:
@@ -344,42 +398,55 @@ class OpportunityStrategy:
             + f["liquidity"] * 0.7
         )
 
-    def _build_rotation_exits(
+    def _build_trend_exits(
         self,
-        scored: list[tuple[SymbolSnapshot, float]],
         positions: dict[str, Position],
         recent_trades: list[Trade],
         now: datetime,
     ) -> list[Trade]:
-        score_map = {f"{item.market_type.value}:{item.symbol}": score for item, score in scored}
         exits: list[Trade] = []
         for position in positions.values():
             key = f"{position.market_type.value}:{position.symbol}"
-            score = score_map.get(key, -999.0)
-            if score >= self.params.rotation_exit_score:
-                self._weak_score_streak.pop(key, None)
-                continue
             open_age = self._position_open_age_seconds(key, recent_trades, now)
-            if open_age is not None and open_age < self.MIN_HOLD_SECONDS:
+            if open_age is None:
+                open_age = 0.0
+
+            if open_age < self.TREND_EXIT_MIN_HOLD_SECONDS:
                 continue
-            streak = self._weak_score_streak.get(key, 0) + 1
-            self._weak_score_streak[key] = streak
-            if streak < 2:
-                continue
-            exits.append(
-                Trade(
-                    symbol=position.symbol,
-                    side=Side.sell,
-                    quantity=position.quantity,
-                    price=position.current_price,
-                    market_type=position.market_type,
-                    leverage=position.leverage,
-                    liquidity_type=LiquidityType.maker,
-                    strategy=self.name,
-                    note=f"机会衰减退出 score={score:.2f}",
+
+            pnl_pct = (position.current_price - position.entry_price) / max(position.entry_price, 1e-9) * 100
+            high_water = self._position_high_water.get(key, 0.0)
+            exit_reason: str | None = None
+
+            # 1. Profit protection: unrealized peaked high then dropped
+            if high_water >= self.PROFIT_PROTECT_TRIGGER_PCT and pnl_pct < self.PROFIT_PROTECT_EXIT_PCT:
+                exit_reason = f"利润保护退出 peak={high_water:.1f}% now={pnl_pct:.1f}%"
+
+            # 2. Flat position timeout: held too long without meaningful move
+            elif open_age > self.FLAT_POSITION_TIMEOUT_SECONDS and abs(pnl_pct) < self.FLAT_POSITION_THRESHOLD_PCT:
+                exit_reason = f"仓位停滞退出 age={open_age / 60:.0f}m pnl={pnl_pct:+.2f}%"
+
+            # 3. Trend reversal: price below mid-term MA and not in significant profit
+            elif open_age >= self.TREND_EXIT_MIN_HOLD_SECONDS:
+                ma_mid = self._compute_ma(key, self.MA_MID_MINUTES)
+                if ma_mid is not None and position.current_price < ma_mid and pnl_pct < 0.5:
+                    exit_reason = f"趋势反转退出 price<MA{self.MA_MID_MINUTES:.0f} pnl={pnl_pct:+.2f}%"
+
+            if exit_reason:
+                exits.append(
+                    Trade(
+                        symbol=position.symbol,
+                        side=Side.sell,
+                        quantity=position.quantity,
+                        price=position.current_price,
+                        market_type=position.market_type,
+                        leverage=position.leverage,
+                        liquidity_type=LiquidityType.maker,
+                        strategy=self.name,
+                        note=exit_reason,
+                    )
                 )
-            )
-            self._weak_score_streak.pop(key, None)
+                self._position_high_water.pop(key, None)
         return exits
 
     def _ingest_watchlist(self, watchlist: list[SymbolSnapshot], now: datetime) -> None:
@@ -387,6 +454,39 @@ class OpportunityStrategy:
             key = f"{item.market_type.value}:{item.symbol}"
             self._series[key].append((item.price, max(item.volume_24h, 1.0), item.change_pct_24h))
             self._first_seen_ts.setdefault(key, now)
+
+    def _compute_ma(self, symbol_key: str, window_minutes: float) -> float | None:
+        series = list(self._series.get(symbol_key, []))
+        if len(series) < 12:
+            return None
+        points = int(window_minutes * 12)
+        subset = series[-points:] if len(series) >= points else series
+        prices = [row[0] for row in subset]
+        return sum(prices) / len(prices) if prices else None
+
+    def _is_trend_confirmed(self, symbol_key: str, snapshot: SymbolSnapshot) -> bool:
+        ma_short = self._compute_ma(symbol_key, self.MA_SHORT_MINUTES)
+        if ma_short is None:
+            return False
+        if snapshot.price < ma_short:
+            return False
+        series = list(self._series.get(symbol_key, []))
+        if len(series) < 36:
+            return False
+        recent_avg = sum(row[0] for row in series[-6:]) / 6
+        earlier_avg = sum(row[0] for row in series[-36:-30]) / max(len(series[-36:-30]), 1)
+        return recent_avg > earlier_avg
+
+    def _update_position_high_water(self, positions: dict[str, Position]) -> None:
+        active_keys: set[str] = set()
+        for position in positions.values():
+            key = f"{position.market_type.value}:{position.symbol}"
+            active_keys.add(key)
+            pnl_pct = (position.current_price - position.entry_price) / max(position.entry_price, 1e-9) * 100
+            self._position_high_water[key] = max(self._position_high_water.get(key, 0.0), pnl_pct)
+        for key in list(self._position_high_water.keys()):
+            if key not in active_keys:
+                del self._position_high_water[key]
 
     def _adapt_hourly(self, recent_trades: list[Trade], now: datetime) -> None:
         hour_key = now.strftime("%Y%m%d%H")
@@ -408,41 +508,33 @@ class OpportunityStrategy:
         win_rate = len(wins) / len(closed) if closed else 0.5
         avg_pnl = realized_sum / len(closed) if closed else 0.0
 
-        if closed and (win_rate < 0.45 or avg_pnl < 0):
+        # Recovery loosening: if no trades in the last hour, gently loosen
+        if not closed:
+            self.params.entry_score_threshold = max(3.0, self.params.entry_score_threshold - 0.15)
+            self.params.position_budget_pct = min(14.0, self.params.position_budget_pct + 0.2)
+        elif win_rate < 0.35 or avg_pnl < 0:
+            # Mild tightening (reduced from previous aggressive steps)
             self.params.max_positions = max(self.MIN_MAX_POSITIONS, self.params.max_positions - 1)
-            self.params.max_exposure_pct = max(self.MIN_MAX_EXPOSURE_PCT, self.params.max_exposure_pct - 3.0)
-            self.params.target_margin_utilization_pct = max(
-                self.MIN_TARGET_MARGIN_UTILIZATION_PCT,
-                self.params.target_margin_utilization_pct - 2.0,
-            )
-            self.params.entry_score_threshold = min(6.8, self.params.entry_score_threshold + 0.4)
-            self.params.rotation_exit_score = min(3.4, self.params.rotation_exit_score + 0.2)
+            self.params.entry_score_threshold = min(5.5, self.params.entry_score_threshold + 0.2)
             self.params.position_budget_pct = max(
                 self.MIN_POSITION_BUDGET_PCT,
-                self.params.position_budget_pct - 0.5,
+                self.params.position_budget_pct - 0.3,
             )
-            self.params.min_quote_volume = min(320_000_000.0, self.params.min_quote_volume * 1.08)
-        elif closed and (win_rate > 0.6 and avg_pnl > 0):
+            self.params.min_quote_volume = min(320_000_000.0, self.params.min_quote_volume * 1.05)
+        elif win_rate > 0.5 and avg_pnl > 0:
+            # Loosening on good performance
             self.params.max_positions = min(self.MAX_MAX_POSITIONS, self.params.max_positions + 1)
             self.params.max_exposure_pct = min(self.MAX_MAX_EXPOSURE_PCT, self.params.max_exposure_pct + 2.0)
             self.params.target_margin_utilization_pct = min(
                 self.MAX_TARGET_MARGIN_UTILIZATION_PCT,
                 self.params.target_margin_utilization_pct + 1.5,
             )
-            self.params.entry_score_threshold = max(2.4, self.params.entry_score_threshold - 0.2)
-            self.params.rotation_exit_score = max(1.2, self.params.rotation_exit_score - 0.1)
-            self.params.position_budget_pct = min(12.0, self.params.position_budget_pct + 0.3)
+            self.params.entry_score_threshold = max(3.0, self.params.entry_score_threshold - 0.15)
+            self.params.position_budget_pct = min(14.0, self.params.position_budget_pct + 0.3)
             self.params.min_quote_volume = max(80_000_000.0, self.params.min_quote_volume * 0.96)
 
         if closed and fee_dominant:
-            self.params.max_positions = max(self.MIN_MAX_POSITIONS, self.params.max_positions - 1)
-            self.params.max_exposure_pct = max(self.MIN_MAX_EXPOSURE_PCT, self.params.max_exposure_pct - 2.0)
-            self.params.target_margin_utilization_pct = max(
-                self.MIN_TARGET_MARGIN_UTILIZATION_PCT,
-                self.params.target_margin_utilization_pct - 1.5,
-            )
-            self.params.entry_score_threshold = min(6.8, self.params.entry_score_threshold + 0.18)
-            self.params.rotation_exit_score = min(3.4, self.params.rotation_exit_score + 0.06)
+            self.params.entry_score_threshold = min(5.5, self.params.entry_score_threshold + 0.1)
 
         self._enforce_param_floors()
 

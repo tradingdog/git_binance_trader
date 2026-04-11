@@ -310,14 +310,14 @@ def test_strategy_keeps_distinct_market_candidates_per_symbol() -> None:
     }
 
 
-def test_strategy_rotation_exit_uses_same_market_score_for_existing_position() -> None:
+def test_strategy_trend_exit_respects_min_hold_time() -> None:
+    """Trend exit should not close positions before TREND_EXIT_MIN_HOLD_SECONDS."""
     strategy = OpportunityStrategy()
-    strategy.params.rotation_exit_score = 1.6
     position = Position(
         symbol="SIRENUSDT",
         quantity=100,
         entry_price=1.0,
-        current_price=1.0,
+        current_price=0.98,
         market_type=MarketType.perpetual,
         side=Side.buy,
         leverage=3,
@@ -325,38 +325,30 @@ def test_strategy_rotation_exit_uses_same_market_score_for_existing_position() -
         take_profit=1.05,
         highest_price=1.0,
     )
-    watchlist = [
-        SymbolSnapshot(
+    now = datetime.now(timezone.utc)
+    # Position opened only 5 minutes ago — should not exit
+    recent = [
+        Trade(
             symbol="SIRENUSDT",
+            side=Side.buy,
+            quantity=100,
             price=1.0,
-            market_cap_rank=20,
-            volume_24h=1_200_000_000,
-            change_pct_24h=4.0,
-            market_type=MarketType.spot,
-            leverage=1,
-            data_source="binance-spot",
-        ),
-        SymbolSnapshot(
-            symbol="SIRENUSDT",
-            price=1.0,
-            market_cap_rank=21,
-            volume_24h=2_200_000_000,
-            change_pct_24h=8.0,
             market_type=MarketType.perpetual,
-            leverage=3,
-            data_source="binance-futures",
-        ),
+            strategy="test",
+            created_at=now - timedelta(minutes=5),
+        )
     ]
-
-    scored = strategy._score_candidates(watchlist)
-    exits = strategy._build_rotation_exits(scored, {"perpetual:SIRENUSDT": position}, [], datetime.now(timezone.utc))
-
+    exits = strategy._build_trend_exits(
+        {"perpetual:SIRENUSDT": position},
+        recent,
+        now,
+    )
     assert exits == []
 
 
 def test_strategy_respects_margin_utilization_target_for_perpetual() -> None:
     strategy = OpportunityStrategy()
-    strategy.params.max_exposure_pct = 60.0
+    strategy.params.max_exposure_pct = 65.0
     strategy.params.target_margin_utilization_pct = 12.0
     strategy.params.position_budget_pct = 30.0
     strategy.params.entry_score_threshold = 0.1
@@ -376,6 +368,11 @@ def test_strategy_respects_margin_utilization_target_for_perpetual() -> None:
         )
     ]
 
+    # Populate series to satisfy trend confirmation
+    key = "perpetual:SIRENUSDT"
+    for i in range(100):
+        strategy._series[key].append((1.90 + i * 0.001, 2e9, 9.0))
+
     trades, _ = strategy.decide(
         watchlist=watchlist,
         positions={},
@@ -392,7 +389,7 @@ def test_strategy_respects_margin_utilization_target_for_perpetual() -> None:
 
 def test_strategy_adaptation_enforces_minimum_parameter_floors() -> None:
     strategy = OpportunityStrategy()
-    strategy.params.max_positions = 3
+    strategy.params.max_positions = 2
     strategy.params.max_exposure_pct = 45.0
     strategy.params.target_margin_utilization_pct = 30.0
     strategy.params.position_budget_pct = 8.0
@@ -411,7 +408,7 @@ def test_strategy_adaptation_enforces_minimum_parameter_floors() -> None:
 
     strategy._adapt_hourly([losing_sell], now)
 
-    assert strategy.params.max_positions >= 3
+    assert strategy.params.max_positions >= 2
     assert strategy.params.max_exposure_pct >= 45.0
     assert strategy.params.target_margin_utilization_pct >= 30.0
     assert strategy.params.position_budget_pct >= 8.0
@@ -420,9 +417,10 @@ def test_strategy_adaptation_enforces_minimum_parameter_floors() -> None:
 def test_strategy_import_state_enforces_minimum_parameter_floors() -> None:
     strategy = OpportunityStrategy()
     payload = {
+        "version": strategy.STRATEGY_VERSION,
         "risk_per_trade_pct": 0.35,
         "params": {
-            "max_positions": 2,
+            "max_positions": 1,
             "max_exposure_pct": 18.0,
             "target_margin_utilization_pct": 12.0,
             "entry_score_threshold": 2.8,
@@ -439,7 +437,7 @@ def test_strategy_import_state_enforces_minimum_parameter_floors() -> None:
     }
 
     assert strategy.import_state(payload)
-    assert strategy.params.max_positions == 3
+    assert strategy.params.max_positions == 2
     assert strategy.params.max_exposure_pct == 45.0
     assert strategy.params.target_margin_utilization_pct == 30.0
     assert strategy.params.position_budget_pct == 8.0
@@ -448,6 +446,7 @@ def test_strategy_import_state_enforces_minimum_parameter_floors() -> None:
 def test_strategy_import_state_enforces_maximum_parameter_ceilings() -> None:
     strategy = OpportunityStrategy()
     payload = {
+        "version": strategy.STRATEGY_VERSION,
         "risk_per_trade_pct": 0.35,
         "params": {
             "max_positions": 10,
@@ -467,8 +466,8 @@ def test_strategy_import_state_enforces_maximum_parameter_ceilings() -> None:
     }
 
     assert strategy.import_state(payload)
-    assert strategy.params.max_positions == 6
-    assert strategy.params.max_exposure_pct == 60.0
+    assert strategy.params.max_positions == 5
+    assert strategy.params.max_exposure_pct == 65.0
     assert strategy.params.target_margin_utilization_pct == 55.0
 
 
@@ -596,117 +595,90 @@ def test_strategy_raises_quality_threshold_for_marginal_signals() -> None:
     assert trades == []
 
 
-def test_strategy_rotation_exit_requires_two_weak_cycles() -> None:
+def test_strategy_trend_exit_triggers_on_flat_position() -> None:
+    """Trend exit closes flat positions after timeout."""
     strategy = OpportunityStrategy()
-    strategy.params.rotation_exit_score = 1.6
     position = Position(
         symbol="SIRENUSDT",
         quantity=100,
         entry_price=1.0,
-        current_price=1.0,
+        current_price=1.002,
         market_type=MarketType.perpetual,
         side=Side.buy,
         leverage=3,
         stop_loss=0.95,
         take_profit=1.05,
-        highest_price=1.0,
-    )
-    watch = SymbolSnapshot(
-        symbol="SIRENUSDT",
-        price=1.0,
-        market_cap_rank=20,
-        volume_24h=1_200_000_000,
-        change_pct_24h=1.0,
-        market_type=MarketType.perpetual,
-        leverage=3,
-        data_source="binance-futures",
+        highest_price=1.003,
     )
     now = datetime.now(timezone.utc)
+    # Populate MA data so trend exit can compute MA
+    key = "perpetual:SIRENUSDT"
+    for i in range(360):
+        strategy._series[key].append((1.001, 2e9, 1.0))
 
-    scored = [(watch, 1.2)]
-    exits_first = strategy._build_rotation_exits(
-        scored,
+    # Position opened 95 minutes ago — beyond FLAT_POSITION_TIMEOUT
+    recent = [
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.buy,
+            quantity=100,
+            price=1.0,
+            market_type=MarketType.perpetual,
+            strategy="test",
+            created_at=now - timedelta(minutes=95),
+        )
+    ]
+    exits = strategy._build_trend_exits(
         {"perpetual:SIRENUSDT": position},
-        [
-            Trade(
-                symbol="SIRENUSDT",
-                side=Side.buy,
-                quantity=100,
-                price=1.0,
-                market_type=MarketType.perpetual,
-                strategy="test",
-                created_at=now - timedelta(minutes=8),
-            )
-        ],
-        now,
-    )
-    exits_second = strategy._build_rotation_exits(
-        scored,
-        {"perpetual:SIRENUSDT": position},
-        [
-            Trade(
-                symbol="SIRENUSDT",
-                side=Side.buy,
-                quantity=100,
-                price=1.0,
-                market_type=MarketType.perpetual,
-                strategy="test",
-                created_at=now - timedelta(minutes=8),
-            )
-        ],
+        recent,
         now,
     )
 
-    assert exits_first == []
-    assert len(exits_second) == 1
+    # Current PnL = +0.2% which is < FLAT_POSITION_THRESHOLD_PCT (0.5%)
+    assert len(exits) == 1
+    assert "停滞" in exits[0].note
 
 
-def test_strategy_rotation_exit_respects_min_hold_time() -> None:
+def test_strategy_trend_exit_profit_protection() -> None:
+    """Trend exit protects profits that were high then dropped."""
     strategy = OpportunityStrategy()
-    strategy.params.rotation_exit_score = 1.6
     position = Position(
         symbol="SIRENUSDT",
         quantity=100,
         entry_price=1.0,
-        current_price=1.0,
+        current_price=1.002,
         market_type=MarketType.perpetual,
         side=Side.buy,
         leverage=3,
         stop_loss=0.95,
-        take_profit=1.05,
-        highest_price=1.0,
-    )
-    watch = SymbolSnapshot(
-        symbol="SIRENUSDT",
-        price=1.0,
-        market_cap_rank=20,
-        volume_24h=1_200_000_000,
-        change_pct_24h=1.0,
-        market_type=MarketType.perpetual,
-        leverage=3,
-        data_source="binance-futures",
+        take_profit=1.10,
+        highest_price=1.025,
     )
     now = datetime.now(timezone.utc)
-    scored = [(watch, 1.2)]
+    key = "perpetual:SIRENUSDT"
+    # Set high water mark above trigger threshold
+    strategy._position_high_water[key] = 2.5  # Was up 2.5%
 
-    exits = strategy._build_rotation_exits(
-        scored,
+    recent = [
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.buy,
+            quantity=100,
+            price=1.0,
+            market_type=MarketType.perpetual,
+            strategy="test",
+            created_at=now - timedelta(minutes=25),
+        )
+    ]
+    exits = strategy._build_trend_exits(
         {"perpetual:SIRENUSDT": position},
-        [
-            Trade(
-                symbol="SIRENUSDT",
-                side=Side.buy,
-                quantity=100,
-                price=1.0,
-                market_type=MarketType.perpetual,
-                strategy="test",
-                created_at=now - timedelta(minutes=3),
-            )
-        ],
+        recent,
         now,
     )
 
-    assert exits == []
+    # Current PnL = +0.2% < PROFIT_PROTECT_EXIT_PCT (0.3%), high water 2.5% > trigger 1.8%
+    assert len(exits) == 1
+    assert "利润保护" in exits[0].note
 
 
 def test_strategy_blocks_reentry_after_rotation_exit() -> None:

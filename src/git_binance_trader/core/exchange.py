@@ -175,6 +175,12 @@ class SimulationExchange:
                     trailing_stop = position.highest_price * (1 - position.trailing_stop_gap_pct / 100)
                     if trailing_stop > position.stop_loss:
                         position.stop_loss = trailing_stop
+                # Breakeven lock: once up 2%, guarantee at least entry price
+                breakeven_threshold_pct = 2.0
+                if position.current_price > position.entry_price * (1 + breakeven_threshold_pct / 100):
+                    breakeven_stop = position.entry_price * 1.001
+                    if breakeven_stop > position.stop_loss:
+                        position.stop_loss = breakeven_stop
                 if position.current_price <= position.stop_loss:
                     to_close.append(
                         Trade(
@@ -417,19 +423,19 @@ class SimulationExchange:
         snapshot: SymbolSnapshot | None,
     ) -> tuple[float, float, float, float]:
         base_tp_by_market = {
-            MarketType.spot: 1.8,
-            MarketType.perpetual: 2.4,
-            MarketType.alpha: 3.2,
+            MarketType.spot: 3.5,
+            MarketType.perpetual: 5.0,
+            MarketType.alpha: 6.0,
         }
         base_sl_by_market = {
-            MarketType.spot: 0.9,
-            MarketType.perpetual: 1.0,
-            MarketType.alpha: 1.2,
+            MarketType.spot: 1.5,
+            MarketType.perpetual: 2.2,
+            MarketType.alpha: 2.8,
         }
         base_trail_by_market = {
-            MarketType.spot: 0.8,
-            MarketType.perpetual: 1.0,
-            MarketType.alpha: 1.15,
+            MarketType.spot: 1.5,
+            MarketType.perpetual: 2.0,
+            MarketType.alpha: 2.2,
         }
 
         base_tp = base_tp_by_market.get(trade.market_type, 1.8)
@@ -453,10 +459,10 @@ class SimulationExchange:
         tp_pct = base_tp + score_bonus + momentum_bonus + volume_bonus - funding_penalty
         if score is not None and score < 2.2:
             tp_pct -= 0.5
-        tp_pct = max(min(tp_pct, 8.8 if trade.market_type == MarketType.alpha else 7.2), 1.2)
+        tp_pct = max(min(tp_pct, 12.0 if trade.market_type == MarketType.alpha else 10.0), 2.0)
 
-        sl_pct = max(min(tp_pct * 0.46, 2.2), base_sl)
-        trail_gap_pct = max(min(tp_pct * 0.36, 2.4), base_trail)
+        sl_pct = max(min(tp_pct * 0.50, 3.5), base_sl)
+        trail_gap_pct = max(min(tp_pct * 0.42, 3.0), base_trail)
 
         stop_loss = trade.price * (1 - sl_pct / 100)
         take_profit = trade.price * (1 + tp_pct / 100)
