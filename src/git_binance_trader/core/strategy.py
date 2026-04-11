@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from math import log10, sqrt
+from math import log10
 
 from git_binance_trader.core.models import LiquidityType, MarketType, Position, Side, SymbolSnapshot, Trade
 
@@ -33,6 +33,10 @@ class OpportunityStrategy:
     ROTATION_REENTRY_COOLDOWN_SECONDS = 20 * 60
     MIN_HOLD_SECONDS = 6 * 60
     MAX_TRADES_PER_SYMBOL_PER_HOUR = 14
+    STOPLOSS_QUARANTINE_SECONDS = 3 * 60 * 60
+    STOPLOSS_QUARANTINE_THRESHOLD = 2
+    MAX_CHASE_24H_PCT = 14.0
+    MIN_SHORT_TREND_CONFIRM_PCT = 0.18
     LOSS_STREAK_LOOKBACK_SECONDS = 90 * 60
     LOSS_STREAK_PENALTY_STEP = 0.6
     QUALITY_THRESHOLD_UPLIFT = 0.15
@@ -93,6 +97,10 @@ class OpportunityStrategy:
             if self._in_rotation_reentry_cooldown(symbol_key, recent_trades, now):
                 continue
             if self._symbol_trade_count_within(symbol_key, recent_trades, now, 3600) >= self.MAX_TRADES_PER_SYMBOL_PER_HOUR:
+                continue
+            if self._in_stoploss_quarantine(symbol_key, recent_trades, now):
+                continue
+            if self._is_chasing_risk(symbol_key, snapshot):
                 continue
 
             effective_score = score - self._loss_streak_penalty(symbol_key, recent_trades, now)
@@ -224,6 +232,7 @@ class OpportunityStrategy:
                 score = self._score_perpetual(factors, item.funding_rate)
             else:
                 score = self._score_alpha(factors)
+            score = max(min(score, 12.0), -4.0)
             market_symbol_key = f"{item.market_type.value}:{item.symbol}"
             existing = best_by_market_symbol.get(market_symbol_key)
             if existing is None or score > existing[1]:
@@ -245,11 +254,15 @@ class OpportunityStrategy:
         volume_surge = max(min(snapshot.volume_24h / avg_volume - 1.0, 6.0), -1.0)
 
         recent_prices = [row[0] for row in series[-18:]]
+        short_trend = 0.0
         if len(recent_prices) >= 6:
             hi = max(recent_prices)
             lo = min(recent_prices)
             spread_pct = (hi - lo) / max(snapshot.price, 1e-9)
             squeeze_score = max(0.0, 0.06 - spread_pct) / 0.06
+            head = max(recent_prices[0], 1e-9)
+            short_trend_pct = (recent_prices[-1] / head - 1.0) * 100
+            short_trend = max(min(short_trend_pct / 0.8, 2.0), -2.0)
         else:
             squeeze_score = 0.0
         breakout = max(0.0, momentum)
@@ -273,6 +286,10 @@ class OpportunityStrategy:
         elif age_hours <= 24 * 7:
             new_coin_behavior = 0.35
 
+        mean_reversion_risk = 0.0
+        if snapshot.change_pct_24h > 10.0 and short_trend < 0:
+            mean_reversion_risk = min(1.8, (snapshot.change_pct_24h - 10.0) / 6.5 + abs(short_trend) * 0.7)
+
         return {
             "momentum": momentum,
             "volume_surge": volume_surge,
@@ -280,7 +297,9 @@ class OpportunityStrategy:
             "cross_market_strength": cross_market_strength,
             "social_heat": social_heat,
             "new_coin_behavior": new_coin_behavior,
-            "liquidity": sqrt(max(snapshot.volume_24h, 1.0)) / 10000.0,
+            "short_trend": short_trend,
+            "mean_reversion_risk": mean_reversion_risk,
+            "liquidity": max(min(log10(max(snapshot.volume_24h, 1.0)) / 6.0, 2.0), 0.0),
         }
 
     @staticmethod
@@ -291,6 +310,8 @@ class OpportunityStrategy:
             + f["volatility_breakout"] * 1.0
             + f["cross_market_strength"] * 0.8
             + f["social_heat"] * 0.5
+            + f["short_trend"] * 0.9
+            - f["mean_reversion_risk"] * 0.9
             + f["liquidity"] * 0.8
         )
 
@@ -303,6 +324,8 @@ class OpportunityStrategy:
             + f["volatility_breakout"] * 0.9
             + f["cross_market_strength"] * 1.25
             + f["social_heat"] * 0.4
+            + f["short_trend"] * 1.1
+            - f["mean_reversion_risk"] * 1.2
             + f["liquidity"] * 0.9
             - funding_penalty
         )
@@ -316,6 +339,8 @@ class OpportunityStrategy:
             + f["cross_market_strength"] * 0.55
             + f["social_heat"] * 1.15
             + f["new_coin_behavior"] * 1.4
+            + f["short_trend"] * 0.95
+            - f["mean_reversion_risk"] * 0.8
             + f["liquidity"] * 0.7
         )
 
@@ -390,8 +415,8 @@ class OpportunityStrategy:
                 self.MIN_TARGET_MARGIN_UTILIZATION_PCT,
                 self.params.target_margin_utilization_pct - 2.0,
             )
-            self.params.entry_score_threshold = min(4.8, self.params.entry_score_threshold + 0.35)
-            self.params.rotation_exit_score = min(2.6, self.params.rotation_exit_score + 0.2)
+            self.params.entry_score_threshold = min(6.8, self.params.entry_score_threshold + 0.4)
+            self.params.rotation_exit_score = min(3.4, self.params.rotation_exit_score + 0.2)
             self.params.position_budget_pct = max(
                 self.MIN_POSITION_BUDGET_PCT,
                 self.params.position_budget_pct - 0.5,
@@ -404,7 +429,7 @@ class OpportunityStrategy:
                 self.MAX_TARGET_MARGIN_UTILIZATION_PCT,
                 self.params.target_margin_utilization_pct + 1.5,
             )
-            self.params.entry_score_threshold = max(2.2, self.params.entry_score_threshold - 0.2)
+            self.params.entry_score_threshold = max(2.4, self.params.entry_score_threshold - 0.2)
             self.params.rotation_exit_score = max(1.2, self.params.rotation_exit_score - 0.1)
             self.params.position_budget_pct = min(12.0, self.params.position_budget_pct + 0.3)
             self.params.min_quote_volume = max(80_000_000.0, self.params.min_quote_volume * 0.96)
@@ -416,8 +441,8 @@ class OpportunityStrategy:
                 self.MIN_TARGET_MARGIN_UTILIZATION_PCT,
                 self.params.target_margin_utilization_pct - 1.5,
             )
-            self.params.entry_score_threshold = min(4.8, self.params.entry_score_threshold + 0.1)
-            self.params.rotation_exit_score = min(2.6, self.params.rotation_exit_score + 0.06)
+            self.params.entry_score_threshold = min(6.8, self.params.entry_score_threshold + 0.18)
+            self.params.rotation_exit_score = min(3.4, self.params.rotation_exit_score + 0.06)
 
         self._enforce_param_floors()
 
@@ -472,9 +497,42 @@ class OpportunityStrategy:
                 continue
             if f"{trade.market_type.value}:{trade.symbol}" != symbol_key:
                 continue
-            if (trade.note or "") == "机会衰减退出":
+            if (trade.note or "").startswith("机会衰减退出"):
                 return True
         return False
+
+    def _in_stoploss_quarantine(self, symbol_key: str, recent_trades: list[Trade], now: datetime) -> bool:
+        cutoff = now.timestamp() - self.STOPLOSS_QUARANTINE_SECONDS
+        stop_count = 0
+        for trade in reversed(recent_trades):
+            if trade.created_at.timestamp() < cutoff:
+                break
+            if trade.side != Side.sell:
+                continue
+            if f"{trade.market_type.value}:{trade.symbol}" != symbol_key:
+                continue
+            if "止损" in (trade.note or ""):
+                stop_count += 1
+                if stop_count >= self.STOPLOSS_QUARANTINE_THRESHOLD:
+                    return True
+        return False
+
+    def _is_chasing_risk(self, symbol_key: str, snapshot: SymbolSnapshot) -> bool:
+        recent_trend_pct = self._recent_trend_pct(symbol_key)
+        if recent_trend_pct is None:
+            return False
+        if recent_trend_pct <= -0.15:
+            return True
+        if snapshot.change_pct_24h >= self.MAX_CHASE_24H_PCT and recent_trend_pct <= self.MIN_SHORT_TREND_CONFIRM_PCT:
+            return True
+        return False
+
+    def _recent_trend_pct(self, symbol_key: str) -> float | None:
+        series = list(self._series.get(symbol_key, []))
+        if len(series) < 6:
+            return None
+        head = max(series[-6][0], 1e-9)
+        return (series[-1][0] / head - 1.0) * 100
 
     @staticmethod
     def _symbol_trade_count_within(
@@ -537,6 +595,8 @@ class OpportunityStrategy:
                 {"key": "cross_market_strength", "label": "跨市场强弱", "desc": "同币种在现货/永续/Alpha 之间的相对强度"},
                 {"key": "social_heat", "label": "社交热度代理", "desc": "按成交量、排名和 Alpha 热点构造的关注度"},
                 {"key": "new_coin_behavior", "label": "新币行为", "desc": "新上线币种在不同阶段的行为溢价"},
+                {"key": "short_trend", "label": "短周期趋势确认", "desc": "最近若干轮价格斜率，用于过滤追涨回落"},
+                {"key": "mean_reversion_risk", "label": "均值回归风险", "desc": "24h 大涨但短周期走弱时的反转风险惩罚"},
             ],
             "adaptive_params": asdict(self.params),
             "latest_adaptation": self._latest_adaptation_snapshot,
@@ -581,6 +641,8 @@ class OpportunityStrategy:
                     "cross_market_strength": round(factors["cross_market_strength"], 4),
                     "social_heat": round(factors["social_heat"], 4),
                     "new_coin_behavior": round(factors["new_coin_behavior"], 4),
+                    "short_trend": round(factors["short_trend"], 4),
+                    "mean_reversion_risk": round(factors["mean_reversion_risk"], 4),
                 },
             }
 

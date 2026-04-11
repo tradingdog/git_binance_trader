@@ -791,3 +791,137 @@ def test_strategy_blocks_high_frequency_symbol_trading() -> None:
     )
 
     assert trades == []
+
+
+def test_strategy_blocks_reentry_after_rotation_exit_with_score_note() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.entry_score_threshold = 0.5
+    strategy.params.min_quote_volume = 1.0
+    now = datetime.now(timezone.utc)
+    watch = SymbolSnapshot(
+        symbol="SIRENUSDT",
+        price=2.0,
+        market_cap_rank=10,
+        volume_24h=2_000_000_000,
+        change_pct_24h=9.0,
+        market_type=MarketType.perpetual,
+        leverage=3,
+        data_source="binance-futures",
+    )
+
+    strategy._score_candidates = lambda watchlist, now=None: [(watch, 2.5)]  # type: ignore[method-assign]
+    recent = [
+        Trade(
+            symbol="SIRENUSDT",
+            side=Side.sell,
+            quantity=1,
+            price=2.1,
+            market_type=MarketType.perpetual,
+            strategy="test",
+            note="机会衰减退出 score=1.10",
+            created_at=now - timedelta(minutes=10),
+        )
+    ]
+
+    trades, _ = strategy.decide(
+        watchlist=[watch],
+        positions={},
+        cash=10_000.0,
+        equity=10_000.0,
+        recent_trades=recent,
+        now_ts=now,
+    )
+
+    assert trades == []
+
+
+def test_strategy_blocks_entry_during_stoploss_quarantine() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.entry_score_threshold = 0.5
+    strategy.params.min_quote_volume = 1.0
+    now = datetime.now(timezone.utc)
+    watch = SymbolSnapshot(
+        symbol="ARIAUSDT",
+        price=0.52,
+        market_cap_rank=18,
+        volume_24h=1_500_000_000,
+        change_pct_24h=10.0,
+        market_type=MarketType.perpetual,
+        leverage=3,
+        data_source="binance-futures",
+    )
+
+    strategy._score_candidates = lambda watchlist, now=None: [(watch, 4.0)]  # type: ignore[method-assign]
+    recent = [
+        Trade(
+            symbol="ARIAUSDT",
+            side=Side.sell,
+            quantity=1,
+            price=0.51,
+            market_type=MarketType.perpetual,
+            strategy="risk_guard",
+            note="触发止损/跟踪止盈",
+            created_at=now - timedelta(minutes=80),
+        ),
+        Trade(
+            symbol="ARIAUSDT",
+            side=Side.sell,
+            quantity=1,
+            price=0.50,
+            market_type=MarketType.perpetual,
+            strategy="risk_guard",
+            note="触发止损/跟踪止盈",
+            created_at=now - timedelta(minutes=30),
+        ),
+    ]
+
+    trades, _ = strategy.decide(
+        watchlist=[watch],
+        positions={},
+        cash=10_000.0,
+        equity=10_000.0,
+        recent_trades=recent,
+        now_ts=now,
+    )
+
+    assert trades == []
+
+
+def test_strategy_blocks_chasing_when_short_trend_fades() -> None:
+    strategy = OpportunityStrategy()
+    strategy.params.entry_score_threshold = 0.5
+    strategy.params.min_quote_volume = 1.0
+    now = datetime.now(timezone.utc)
+    watch = SymbolSnapshot(
+        symbol="RAVEUSDT",
+        price=1.93,
+        market_cap_rank=16,
+        volume_24h=2_300_000_000,
+        change_pct_24h=22.0,
+        market_type=MarketType.perpetual,
+        leverage=3,
+        data_source="binance-futures",
+    )
+    key = "perpetual:RAVEUSDT"
+    strategy._series[key].extend(
+        [
+            (1.96, 1_900_000_000.0, 20.0),
+            (1.95, 2_000_000_000.0, 20.8),
+            (1.95, 2_050_000_000.0, 21.2),
+            (1.94, 2_100_000_000.0, 21.6),
+            (1.94, 2_200_000_000.0, 21.8),
+            (1.93, 2_300_000_000.0, 22.0),
+        ]
+    )
+
+    strategy._score_candidates = lambda watchlist, now=None: [(watch, 5.0)]  # type: ignore[method-assign]
+    trades, _ = strategy.decide(
+        watchlist=[watch],
+        positions={},
+        cash=10_000.0,
+        equity=10_000.0,
+        recent_trades=[],
+        now_ts=now,
+    )
+
+    assert trades == []
