@@ -54,6 +54,10 @@ class OpportunityStrategy:
     # ── 均线参数 ──
     MA_SHORT_MINUTES = 8.0
     MA_MID_MINUTES = 25.0
+    # ── Alpha/现货参数 ──
+    ALPHA_MIN_QUOTE_VOLUME = 500_000.0
+    SPOT_MIN_QUOTE_VOLUME = 50_000_000.0
+    DIVERSIFICATION_BONUS = 1.5  # 全为合约时给 alpha/现货候选加分
 
     def __init__(self) -> None:
         self.risk_per_trade_pct = 0.35
@@ -108,6 +112,8 @@ class OpportunityStrategy:
         if slots == 0 or room <= 0 or margin_room <= 0:
             return trades, "; ".join(insights) if insights else "仓位已满，等待信号"
 
+        # 市场多样化：如果当前持仓全是合约，给 alpha/现货候选加分
+        all_perp = all(p.market_type == MarketType.perpetual for p in positions.values()) if positions else True
         for snapshot, score in scored:
             symbol_key = f"{snapshot.market_type.value}:{snapshot.symbol}"
             if any(
@@ -131,9 +137,18 @@ class OpportunityStrategy:
                 continue
 
             effective_score = score - self._loss_streak_penalty(symbol_key, recent_trades, now)
+            # 多样化加分：全为合约持仓时，alpha/现货候选获得额外分数
+            if all_perp and snapshot.market_type in {MarketType.alpha, MarketType.spot}:
+                effective_score += self.DIVERSIFICATION_BONUS
             if effective_score < self.params.entry_score_threshold + self.QUALITY_THRESHOLD_UPLIFT:
                 continue
-            if snapshot.volume_24h < self.params.min_quote_volume:
+            # 按市场类型使用不同的成交量门槛
+            vol_threshold = self.params.min_quote_volume
+            if snapshot.market_type == MarketType.alpha:
+                vol_threshold = self.ALPHA_MIN_QUOTE_VOLUME
+            elif snapshot.market_type == MarketType.spot:
+                vol_threshold = self.SPOT_MIN_QUOTE_VOLUME
+            if snapshot.volume_24h < vol_threshold:
                 continue
 
             position_budget_pct = min(self.params.position_budget_pct, room / slots)
@@ -418,17 +433,25 @@ class OpportunityStrategy:
             high_water = self._position_high_water.get(key, 0.0)
             exit_reason: str | None = None
 
-            # 1. Profit protection: unrealized peaked high then dropped
-            if high_water >= self.PROFIT_PROTECT_TRIGGER_PCT and pnl_pct < self.PROFIT_PROTECT_EXIT_PCT:
-                exit_reason = f"利润保护退出 peak={high_water:.1f}% now={pnl_pct:.1f}%"
+            ma_short = self._compute_ma(key, self.MA_SHORT_MINUTES)
+            ma_mid = self._compute_ma(key, self.MA_MID_MINUTES)
+
+            # 1. Profit protection: peaked high then MA death cross OR severe drawdown
+            if high_water >= self.PROFIT_PROTECT_TRIGGER_PCT:
+                ma_death_cross = (ma_short is not None and ma_mid is not None and ma_short < ma_mid)
+                severe_drawdown = (pnl_pct < high_water * 0.3)  # 回撤超过峰值的 70%
+                if ma_death_cross and pnl_pct < high_water * 0.6:
+                    exit_reason = f"利润保护退出(MA交叉) peak={high_water:.1f}% now={pnl_pct:.1f}%"
+                elif severe_drawdown and pnl_pct < self.PROFIT_PROTECT_EXIT_PCT:
+                    exit_reason = f"利润保护退出 peak={high_water:.1f}% now={pnl_pct:.1f}%"
 
             # 2. Flat position timeout: held too long without meaningful move
             elif open_age > self.FLAT_POSITION_TIMEOUT_SECONDS and abs(pnl_pct) < self.FLAT_POSITION_THRESHOLD_PCT:
                 exit_reason = f"仓位停滞退出 age={open_age / 60:.0f}m pnl={pnl_pct:+.2f}%"
 
-            # 3. Trend reversal: price below mid-term MA and not in significant profit
+            # 3. Trend reversal: price below mid-term MA and NOT in meaningful profit
+            #    盈利 > 2% 时不触发趋势反转退出，交给跟踪止损处理
             elif open_age >= self.TREND_EXIT_MIN_HOLD_SECONDS:
-                ma_mid = self._compute_ma(key, self.MA_MID_MINUTES)
                 if ma_mid is not None and position.current_price < ma_mid and pnl_pct < 0.5:
                     exit_reason = f"趋势反转退出 price<MA{self.MA_MID_MINUTES:.0f} pnl={pnl_pct:+.2f}%"
 
@@ -465,6 +488,15 @@ class OpportunityStrategy:
         return sum(prices) / len(prices) if prices else None
 
     def _is_trend_confirmed(self, symbol_key: str, snapshot: SymbolSnapshot) -> bool:
+        # Alpha 币波动大、数据积累少，用宽松条件：仅要求价格在短均线上方
+        if snapshot.market_type == MarketType.alpha:
+            ma_short = self._compute_ma(symbol_key, self.MA_SHORT_MINUTES)
+            if ma_short is None:
+                # Alpha 数据不足时，若 24h 涨幅 > 5% 视为趋势向上
+                series = list(self._series.get(symbol_key, []))
+                return len(series) >= 6 and snapshot.change_pct_24h > 5.0
+            return snapshot.price >= ma_short
+
         ma_short = self._compute_ma(symbol_key, self.MA_SHORT_MINUTES)
         if ma_short is None:
             return False

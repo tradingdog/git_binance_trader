@@ -194,17 +194,19 @@ class SimulationExchange:
                         )
                     )
                 elif position.current_price >= position.take_profit:
-                    to_close.append(
-                        Trade(
-                            symbol=position.symbol,
-                            side=Side.sell,
-                            quantity=position.quantity,
-                            price=position.current_price,
-                            market_type=position.market_type,
-                            strategy="risk_guard",
-                            note="触发止盈",
-                        )
-                    )
+                    # 动态止盈：触达TP后不立即平仓，收紧跟踪并锁利，让赢家继续奔跑
+                    new_trail = max(position.trailing_stop_gap_pct * 0.5, 0.6)
+                    position.trailing_stop_gap_pct = new_trail
+                    # 锁利：SL 至少保到 TP 涨幅的 60%
+                    lock_stop = position.entry_price * (1 + position.take_profit_pct * 0.6 / 100)
+                    if lock_stop > position.stop_loss:
+                        position.stop_loss = lock_stop
+                    # 提升跟踪止损到当前高水位
+                    trailing_stop = position.highest_price * (1 - new_trail / 100)
+                    if trailing_stop > position.stop_loss:
+                        position.stop_loss = trailing_stop
+                    # 把 TP 天花板推到更远处，后续由跟踪止损兜底
+                    position.take_profit = position.current_price * (1 + position.take_profit_pct / 100)
 
         for trade in to_close:
             position_key = self._position_key(trade.symbol, trade.market_type)
